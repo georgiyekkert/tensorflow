@@ -1100,7 +1100,8 @@ tf_python_pybind_extension(
     pytype_srcs = [
         "flags_pybind.pyi",
     ],
-    visibility = ["//tensorflow/core/config:__subpackages__"],
+    visibility = ["//tensorflow/core/config:__subpackages__",
+                  "//tensorflow/tools/pip_package:__subpackages__",],
     deps = [
         "//tensorflow/core:lib_headers_for_pybind",
         "//tensorflow/core/config:flags_headers",
@@ -1303,7 +1304,9 @@ tf_python_pybind_extension(
     pytype_srcs = [
         "_pywrap_parallel_device.pyi",
     ],
-    visibility = ["//tensorflow/python/distribute/parallel_device:__pkg__"],
+    visibility = [
+        "//tensorflow/python/distribute/parallel_device:__pkg__",
+        "//tensorflow/tools/pip_package:__subpackages__",],
     deps = [
         "//tensorflow/c:pywrap_required_hdrs",
         "//tensorflow/c/eager:tfe_cancellationmanager_internal_hdrs_only",

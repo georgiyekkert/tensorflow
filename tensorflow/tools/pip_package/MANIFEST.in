@@ -6,11 +6,13 @@ recursive-include * *.pyd
 recursive-include * *.pyi
 recursive-include * *.pd
 recursive-include * *.so
-recursive-include * *.so.[0-9]
+recursive-include * *.so.2.15.0
 recursive-include * *.dylib
 recursive-include * *.dll
 recursive-include * *.lib
 recursive-include * *.csv
+recursive-include tensorflow *
+recursive-include tensorflow/libtensorflow_framework.so.2.15.0
 recursive-include tensorflow/include/tensorflow *.h
 recursive-include tensorflow/include/tensorflow *.proto
 recursive-include tensorflow/include/Eigen *

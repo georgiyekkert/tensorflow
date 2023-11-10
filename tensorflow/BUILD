@@ -1716,3 +1716,12 @@ py_library(
     ],
 )
 # copybara:comment_end
+
+filegroup(
+    name = "files",
+    srcs = glob(
+        include = ["**/*.py"],
+        #exclude = ["**/*_test.py"],
+    ),
+    visibility = ["//tensorflow/tools/pip_package:__pkg__"],
+)

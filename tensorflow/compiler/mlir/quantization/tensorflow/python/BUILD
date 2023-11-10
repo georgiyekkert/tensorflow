@@ -15,6 +15,7 @@ package(
     default_visibility = [
         "//tensorflow/compiler/mlir/quantization/tensorflow:internal_visibility_allowlist_package",
         "//tensorflow/python:__subpackages__",
+        "//tensorflow/tools/pip_package:__subpackages__",
     ],
     licenses = ["notice"],
 )

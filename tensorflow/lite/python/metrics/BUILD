@@ -41,7 +41,7 @@ pybind_extension(
     pytype_srcs = [
         "_pywrap_tensorflow_lite_metrics_wrapper.pyi",
     ],
-    visibility = ["//visibility:private"],
+    visibility = ["//visibility:private",],
     deps = [
         ":metrics_wrapper_lib",
         "//tensorflow/python/lib/core:pybind11_lib",

@@ -397,6 +397,7 @@ setup(
     author_email='packages@tensorflow.org',
     install_requires=REQUIRED_PACKAGES,
     extras_require=EXTRA_PACKAGES,
+    setup_requires=['wheel'],
     # Add in any packaged data.
     zip_safe=False,
     # Supported Python versions

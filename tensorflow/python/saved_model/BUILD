@@ -925,6 +925,7 @@ tf_python_pybind_extension(
         "//tensorflow/python/checkpoint:__subpackages__",
         "//tensorflow/python/tpu:__pkg__",
         "//tensorflow/python/training:__subpackages__",
+        "//tensorflow/tools/pip_package:__subpackages__",
     ],
     deps = [
         ":pywrap_saved_model_headers",

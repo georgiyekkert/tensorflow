@@ -14,6 +14,7 @@ package_group(
     name = "friends",
     packages = [
         "//tensorflow/compiler/tests/...",
+        "//tensorflow/tools/pip_package/...",
     ],
 )
 
