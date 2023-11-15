@@ -71,6 +71,10 @@ def _tf_wheel_impl(ctx):
     for f in headers:
         args.add("--headers=%s" % (f.path))
 
+    xla_aot = ctx.files.xla_aot_compiled[:]
+    for f in xla_aot:
+        args.add("--xla_aot=%s" % (f.path))
+
     srcs = []
     for src in ctx.attr.srcs:
         for f in src.files.to_list():
@@ -91,6 +95,7 @@ tf_wheel = rule(
         "srcs": attr.label_list(allow_files = True),
         "deps": attr.label_list(allow_files = True),
         "headers": attr.label_list(allow_files = True),
+        "xla_aot_compiled": attr.label_list(allow_files = True),
         "py_version": attr.string(),
         "platform": attr.string(),
         "tf_version": attr.string(),

@@ -244,7 +244,7 @@ class InstallHeaders(Command):
   def initialize_options(self):
     self.install_dir = None
     self.force = 0
-    self.outfiles = []
+    #self.outfiles = []
 
   def finalize_options(self):
     self.set_undefined_options('install', ('install_headers', 'install_dir'),
@@ -284,20 +284,21 @@ class InstallHeaders(Command):
     return self.copy_file(header, install_dir)
 
   def run(self):
-    hdrs = self.distribution.headers
-    if not hdrs:
-      return
+    pass
+    #hdrs = self.distribution.headers
+    #if not hdrs:
+   #   return
 
-    self.mkpath(self.install_dir)
-    for header in hdrs:
-      (out, _) = self.mkdir_and_copy_file(header)
-      self.outfiles.append(out)
+    #self.mkpath(self.install_dir)
+    #for header in hdrs:
+    #  (out, _) = self.mkdir_and_copy_file(header)
+      #self.outfiles.append(out)
 
   def get_inputs(self):
     return self.distribution.headers or []
 
-  def get_outputs(self):
-    return self.outfiles
+  #def get_outputs(self):
+  #  return self.outfiles
 
 
 def find_files(pattern, root):

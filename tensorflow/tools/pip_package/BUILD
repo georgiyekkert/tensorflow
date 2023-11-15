@@ -10,6 +10,7 @@ load("//tensorflow/tools/pip_package:tf_wheel.bzl", "tf_wheel", "transitive_py_d
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("//tensorflow:tensorflow.bzl", "VERSION")
 load("@python//:defs.bzl", "host_platform")
+load("//tensorflow/tools/pip_package:cc_deps.bzl", "transitive_cc_deps")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -107,8 +108,6 @@ PIP_DATA = [
     ":included_headers",
     ":xla_compiled_cpu_runtime_srcs.txt_file",
     ":xla_cmake",
-    "//tensorflow/compiler/tf2xla:xla_compiled_cpu_runtime_hdrs",
-    "//tensorflow/compiler/tf2xla:xla_compiled_cpu_runtime_srcs",
     "//tensorflow/core:protos_all_proto_srcs",
     "//tensorflow/python/framework:meta_graph_testdata",
     "//tensorflow/python/kernel_tests/linalg/testdata:self_adjoint_eig_op_test_files",
@@ -281,77 +280,87 @@ sh_binary(
 
 SO_SRCS = [
     "//tensorflow:tensorflow_framework",
-    #"//tensorflow:tensorflow_cc",
+    "//tensorflow:tensorflow_cc",
 ]
 
 GENERATED_SO = [
-    "//tensorflow/core/kernels:libtfkernel_sobol_op.so",
-    "//tensorflow/python:flags_pybind.so",
-    "//tensorflow/python:_pywrap_tensorflow_internal.so",
-    "//tensorflow/python:_pywrap_py_exception_registry.so",
-    "//tensorflow/python:_pywrap_toco_api.so",
-    "//tensorflow/python:_pywrap_tfcompile.so",
-    "//tensorflow/python:_pywrap_tfe.so",
-    "//tensorflow/python:_pywrap_sanitizers.so",
-    "//tensorflow/python:_pywrap_parallel_device.so",
-    "//tensorflow/python:_pywrap_quantize_training.so",
-    "//tensorflow/compiler/mlir/quantization/tensorflow/python:pywrap_quantize_model.so",
-    "//tensorflow/python:_pywrap_dtensor_device.so",
-    "//tensorflow/python:_pywrap_mlir.so",
-    "//tensorflow/python/autograph/impl/testing:pybind_for_testing.so",
-    "//tensorflow/python/grappler:_pywrap_tf_cluster.so",
-    "//tensorflow/python/grappler:_pywrap_tf_item.so",
-    "//tensorflow/python/grappler:_pywrap_tf_optimizer.so",
-    "//tensorflow/python/platform:_pywrap_stacktrace_handler.so",
-    "//tensorflow/python/platform:_pywrap_cpu_feature_guard.so",
-    "//tensorflow/python/platform:_pywrap_tf2.so",
-    "//tensorflow/python/util:_pywrap_determinism.so",
-    "//tensorflow/python/util:_tf_stack.so",
-    "//tensorflow/python/util:_pywrap_nest.so",
-    "//tensorflow/python/util:_pywrap_checkpoint_reader.so",
-    "//tensorflow/python/util:fast_module_type.so",
-    "//tensorflow/python/util:_pywrap_transform_graph.so",
-    "//tensorflow/python/util:_pywrap_tfprof.so",
-    "//tensorflow/python/util:_pywrap_util_port.so",
-    "//tensorflow/python/util:_pywrap_stat_summarizer.so",
-    "//tensorflow/python/util:_pywrap_utils.so",
-    "//tensorflow/python/util:pywrap_xla_ops.so",
-    "//tensorflow/python/util:_pywrap_kernel_registry.so",
-    "//tensorflow/python/util:_pywrap_tensor_float_32_execution.so",
-    "//tensorflow/python/data/experimental/service:_pywrap_server_lib.so",
-    "//tensorflow/python/data/experimental/service:_pywrap_snapshot_utils.so",
-    "//tensorflow/python/data/experimental/service:_pywrap_utils.so",
-    "//tensorflow/python/lib/core:_pywrap_py_func.so",
-    "//tensorflow/python/lib/io:_pywrap_file_io.so",
-    "//tensorflow/python/lib/io:_pywrap_record_io.so",
-    "//tensorflow/python/framework:_test_metrics_util.so",
-    "//tensorflow/python/framework:_pywrap_python_api_dispatcher.so",
-    "//tensorflow/python/framework:_op_def_library_pybind.so",
-    "//tensorflow/python/framework:_op_def_registry.so",
-    "//tensorflow/python/framework:_pywrap_python_op_gen.so",
-    "//tensorflow/python/framework:_pywrap_python_api_info.so",
-    "//tensorflow/python/framework:_pywrap_python_api_parameter_converter.so",
-    "//tensorflow/python/framework:_errors_test_helper.so",
-    "//tensorflow/python/framework:_python_memory_checker_helper.so",
-    "//tensorflow/python/framework:_dtypes.so",
-    "//tensorflow/python/framework:fast_tensor_util.so",
-    "//tensorflow/python/framework:_proto_comparators.so",
-    "//tensorflow/python/saved_model:pywrap_saved_model.so",
-    "//tensorflow/python/client:_pywrap_tf_session.so",
-    "//tensorflow/python/client:_pywrap_events_writer.so",
-    "//tensorflow/python/client:_pywrap_debug_events_writer.so",
-    "//tensorflow/python/client:_pywrap_device_lib.so",
-    "//tensorflow/python/profiler/internal:_pywrap_traceme.so",
-    "//tensorflow/python/profiler/internal:_pywrap_profiler.so",
-    "//tensorflow/compiler/tf2tensorrt:_pywrap_py_utils.so",
-    "//tensorflow/compiler/mlir/stablehlo:stablehlo_extension.so",
-    "//tensorflow/compiler/tf2xla/ops:_xla_ops.so",
-    "//tensorflow/lite/python/interpreter_wrapper:_pywrap_tensorflow_interpreter_wrapper.so",
-    "//tensorflow/lite/python/optimize:_pywrap_tensorflow_lite_calibration_wrapper.so",
-    #"//tensorflow/lite/python/metrics:_pywrap_tensorflow_lite_metrics_wrapper.so",
-    "//tensorflow/lite/python/analyzer_wrapper:_pywrap_analyzer_wrapper.so",
-    "//tensorflow/lite/experimental/microfrontend:python/ops/_audio_microfrontend_op.so",
+    #"//tensorflow/core/kernels:libtfkernel_sobol_op",  .so?
+    "//tensorflow/python:flags_pybind",
+    #"//tensorflow/python:_pywrap_tensorflow_internal", .so?
+    "//tensorflow/python:_pywrap_py_exception_registry",
+    "//tensorflow/python:_pywrap_toco_api",
+    "//tensorflow/python:_pywrap_tfcompile",
+    "//tensorflow/python:_pywrap_tfe",
+    "//tensorflow/python:_pywrap_sanitizers",
+    "//tensorflow/python:_pywrap_parallel_device",
+    "//tensorflow/python:_pywrap_quantize_training",
+    "//tensorflow/compiler/mlir/quantization/tensorflow/python:pywrap_quantize_model",
+    "//tensorflow/python:_pywrap_dtensor_device",
+    "//tensorflow/python:_pywrap_mlir",
+    "//tensorflow/python/autograph/impl/testing:pybind_for_testing",
+    "//tensorflow/python/grappler:_pywrap_tf_cluster",
+    "//tensorflow/python/grappler:_pywrap_tf_item",
+    "//tensorflow/python/grappler:_pywrap_tf_optimizer",
+    "//tensorflow/python/platform:_pywrap_stacktrace_handler",
+    "//tensorflow/python/platform:_pywrap_cpu_feature_guard",
+    "//tensorflow/python/platform:_pywrap_tf2",
+    "//tensorflow/python/util:_pywrap_determinism",
+    "//tensorflow/python/util:_tf_stack",
+    "//tensorflow/python/util:_pywrap_nest",
+    "//tensorflow/python/util:_pywrap_checkpoint_reader",
+    "//tensorflow/python/util:fast_module_type",
+    "//tensorflow/python/util:_pywrap_transform_graph",
+    "//tensorflow/python/util:_pywrap_tfprof",
+    "//tensorflow/python/util:_pywrap_util_port",
+    "//tensorflow/python/util:_pywrap_stat_summarizer",
+    "//tensorflow/python/util:_pywrap_utils",
+    #"//tensorflow/python/util:pywrap_xla_ops", .so
+    "//tensorflow/python/util:_pywrap_kernel_registry",
+    "//tensorflow/python/util:_pywrap_tensor_float_32_execution",
+    "//tensorflow/python/data/experimental/service:_pywrap_server_lib",
+    "//tensorflow/python/data/experimental/service:_pywrap_snapshot_utils",
+    "//tensorflow/python/data/experimental/service:_pywrap_utils",
+    "//tensorflow/python/lib/core:_pywrap_py_func",
+    "//tensorflow/python/lib/io:_pywrap_file_io",
+    "//tensorflow/python/lib/io:_pywrap_record_io",
+    "//tensorflow/python/framework:_test_metrics_util",
+    "//tensorflow/python/framework:_pywrap_python_api_dispatcher",
+    "//tensorflow/python/framework:_op_def_library_pybind",
+    "//tensorflow/python/framework:_op_def_registry",
+    "//tensorflow/python/framework:_pywrap_python_op_gen",
+    "//tensorflow/python/framework:_pywrap_python_api_info",
+    "//tensorflow/python/framework:_pywrap_python_api_parameter_converter",
+    "//tensorflow/python/framework:_errors_test_helper",
+    "//tensorflow/python/framework:_python_memory_checker_helper",
+    "//tensorflow/python/framework:_dtypes",
+    "//tensorflow/python/framework:fast_tensor_util",
+    "//tensorflow/python/framework:_proto_comparators",
+    "//tensorflow/python/saved_model:pywrap_saved_model",
+    "//tensorflow/python/client:_pywrap_tf_session",
+    "//tensorflow/python/client:_pywrap_events_writer",
+    "//tensorflow/python/client:_pywrap_debug_events_writer",
+    "//tensorflow/python/client:_pywrap_device_lib",
+    "//tensorflow/python/profiler/internal:_pywrap_traceme",
+    "//tensorflow/python/profiler/internal:_pywrap_profiler",
+    "//tensorflow/compiler/tf2tensorrt:_pywrap_py_utils",
+    "//tensorflow/compiler/mlir/stablehlo:stablehlo_extension",
+    #"//tensorflow/compiler/tf2xla/ops:_xla_ops",
+    "//tensorflow/lite/python/interpreter_wrapper:_pywrap_tensorflow_interpreter_wrapper",
+    "//tensorflow/lite/python/optimize:_pywrap_tensorflow_lite_calibration_wrapper",
+    #"//tensorflow/lite/python/metrics:_pywrap_tensorflow_lite_metrics_wrapper",
+    "//tensorflow/lite/python/analyzer_wrapper:_pywrap_analyzer_wrapper",
+    #"//tensorflow/lite/experimental/microfrontend:python/ops/_audio_microfrontend_op", .so
 ]
+
+
+SO = [
+    "//tensorflow/compiler/tf2xla/ops:_xla_ops.so",
+    "//tensorflow/core/kernels:libtfkernel_sobol_op.so",
+    "//tensorflow/lite/experimental/microfrontend:python/ops/_audio_microfrontend_op.so",
+    #"//tensorflow/python:_pywrap_tensorflow_internal.so",
+    "//tensorflow/python/util:pywrap_xla_ops.so",
+]
+
 
 py_binary(
     name = "build_pip_package_py",
@@ -363,18 +372,30 @@ py_binary(
 
 tf_wheel(
     name = "test_wheel",
-    srcs = GENERATED_SO + SO_SRCS,  #COMMON_PIP_DEPS,
+    srcs = [
+        ":cc_deps"
+    ] + SO_SRCS + SO,  #COMMON_PIP_DEPS,
     platform = "linux_x86_64",
     py_version = HERMETIC_PYTHON_VERSION.replace(".", ""),
     tf_version = VERSION,
     headers = [
         ":included_headers",
     ],
+    xla_aot_compiled = [
+        "//tensorflow/compiler/tf2xla:xla_compiled_cpu_runtime_srcs",
+        ":xla_cmake",
+        ],
     deps = [
         "MANIFEST.in",
+        "THIRD_PARTY_NOTICES.txt",
         "setup.py",
         ":py_deps",
     ],
+)
+
+transitive_cc_deps(
+    name = "cc_deps",
+    deps = GENERATED_SO,
 )
 
 transitive_py_deps(
