@@ -69,7 +69,6 @@ def prepare_headers(headers, srcs_dir):
       "bazel-out/k8-opt/bin/": "",
   }
 
-
   for file in headers:
     if file.endswith("cc.inc"):
       continue
@@ -82,7 +81,7 @@ def prepare_headers(headers, srcs_dir):
         copy_file(file, srcs_dir + val, path)
         break
     else:
-      copy_file(file, srcs_dir, None)
+      copy_file(file, srcs_dir)
 
 
 def prepare_deps(deps, srcs_dir):
@@ -104,7 +103,7 @@ def prepare_deps(deps, srcs_dir):
       continue
 
     if file.endswith(".proto"):
-      copy_file(file, srcs_dir+"/tensorflow/include/", None)
+      copy_file(file, srcs_dir+"/tensorflow/include/")
       continue
 
     for path, val in path_to_replace.items():
@@ -112,7 +111,7 @@ def prepare_deps(deps, srcs_dir):
         copy_file(file, srcs_dir + val, path)
         break
     else:
-      copy_file(file, srcs_dir, None)
+      copy_file(file, srcs_dir)
 
 
 def prepare_wheel(headers, deps, srcs, aot, srcs_dir):
@@ -124,28 +123,32 @@ def prepare_wheel(headers, deps, srcs, aot, srcs_dir):
     if "bazel-out/k8-opt/bin/" in file:
       copy_file(file, srcs_dir, "bazel-out/k8-opt/bin/")
     else:
-      copy_file(file, srcs_dir, None)
+      copy_file(file, srcs_dir)
 
-  #for file in aot:
-  #  if "external/local_tsl/" in file:
-  #    copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
-  #              "external/local_tsl/")
-  #  elif "external/local_xla/" in file:
-  #    copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
-  #              "external/local_xla/")
-  #  else:
-  #    copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src", None)
+  for file in aot:
+    if "external/local_tsl/" in file:
+      copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
+                "external/local_tsl/")
+    elif "external/local_xla/" in file:
+      copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
+                "external/local_xla/")
+    else:
+      copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src", None)
 
-  #shutil.move(
-  #    srcs_dir + "/tensorflow/tools/pip_package/THIRD_PARTY_NOTICES.txt",
-  #    srcs_dir + "/tensorflow/THIRD_PARTY_NOTICES.txt")
+  shutil.move(
+      srcs_dir + "/tensorflow/tools/pip_package/THIRD_PARTY_NOTICES.txt",
+      srcs_dir + "/tensorflow/THIRD_PARTY_NOTICES.txt")
 
 def is_windows() -> bool:
   return sys.platform.startswith("win32")
 
 def local_config_python(dst_dir):
   shutil.copytree("external/pypi_numpy/site-packages/numpy/core/include", dst_dir+"/numpy_include")
-  shutil.copytree(glob.glob("external/python_*/include/python*")[0], dst_dir+"/python_include")
+  if is_windows():
+    path = "python_*/include"
+  else:
+    path = "external/python_*/include/python*"
+  shutil.copytree(glob.glob(path)[0], dst_dir+"/python_include")
 
 
 def create_init_files(dst_dir):
@@ -164,7 +167,6 @@ def copy_file(
     src_file: str,
     dst_dir: str,
     strip: str = None,
-    create_init: bool = False,
 ) -> None:
   if strip:
     src_file_no_prefix = src_file.removeprefix(strip)
@@ -172,10 +174,6 @@ def copy_file(
     src_file_no_prefix = src_file
   dstdir = os.path.join(dst_dir, os.path.dirname(src_file_no_prefix))
   os.makedirs(dstdir, exist_ok=True)
-  if create_init:
-    if not os.path.exists(dstdir + "/__init__.py"):
-      open(dstdir + "/__init__.py", 'a').close()
-
   shutil.copy(src_file, dstdir)
 
 

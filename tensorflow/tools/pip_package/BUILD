@@ -287,7 +287,6 @@ SO_SRCS = [
 GENERATED_SO = [
     #"//tensorflow/core/kernels:libtfkernel_sobol_op",  .so?
     "//tensorflow/python:flags_pybind",
-    #"//tensorflow/python:_pywrap_tensorflow_internal", .so?
     "//tensorflow/python:_pywrap_py_exception_registry",
     "//tensorflow/python:_pywrap_toco_api",
     "//tensorflow/python:_pywrap_tfcompile",
@@ -315,7 +314,6 @@ GENERATED_SO = [
     "//tensorflow/python/util:_pywrap_util_port",
     "//tensorflow/python/util:_pywrap_stat_summarizer",
     "//tensorflow/python/util:_pywrap_utils",
-    #"//tensorflow/python/util:pywrap_xla_ops", .so
     "//tensorflow/python/util:_pywrap_kernel_registry",
     "//tensorflow/python/util:_pywrap_tensor_float_32_execution",
     "//tensorflow/python/data/experimental/service:_pywrap_server_lib",
@@ -345,20 +343,17 @@ GENERATED_SO = [
     "//tensorflow/python/profiler/internal:_pywrap_profiler",
     "//tensorflow/compiler/tf2tensorrt:_pywrap_py_utils",
     "//tensorflow/compiler/mlir/stablehlo:stablehlo_extension",
-    #"//tensorflow/compiler/tf2xla/ops:_xla_ops",
     "//tensorflow/lite/python/interpreter_wrapper:_pywrap_tensorflow_interpreter_wrapper",
     "//tensorflow/lite/python/optimize:_pywrap_tensorflow_lite_calibration_wrapper",
-    #"//tensorflow/lite/python/metrics:_pywrap_tensorflow_lite_metrics_wrapper",
+    "//tensorflow/lite/python/metrics:_pywrap_tensorflow_lite_metrics_wrapper",
     "//tensorflow/lite/python/analyzer_wrapper:_pywrap_analyzer_wrapper",
-    #"//tensorflow/lite/experimental/microfrontend:python/ops/_audio_microfrontend_op", .so
+    "//tensorflow/python/util:pywrap_xla_ops"
 ]
 
 SO = [
     "//tensorflow/compiler/tf2xla/ops:_xla_ops.so",
     "//tensorflow/core/kernels:libtfkernel_sobol_op.so",
     "//tensorflow/lite/experimental/microfrontend:python/ops/_audio_microfrontend_op.so",
-    #"//tensorflow/python:_pywrap_tensorflow_internal.so",
-    "//tensorflow/python/util:pywrap_xla_ops.so",
 ]
 
 py_binary(
@@ -377,7 +372,7 @@ tf_wheel(
     name = "test_wheel",
     srcs = [
         ":cc_deps",
-    ] + SO, # + SO_SRCS,  #COMMON_PIP_DEPS,
+    ] + SO, # + SO_SRCS
     headers = [
         ":included_headers",
     ],
