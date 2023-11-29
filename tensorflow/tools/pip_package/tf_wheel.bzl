@@ -15,6 +15,7 @@
 # Bazel rule for collecting the header files that a target depends on.
 def _transitive_hdrs_impl(ctx):
     outputs = _get_transitive_py_deps([], ctx.attr.deps)
+
     #print(outputs)
     return DefaultInfo(files = outputs)
 
@@ -55,12 +56,12 @@ def dest_path(file):
     ret = file.short_path
     return ret
 
-
 def _tf_wheel_impl(ctx):
     executable = ctx.executable.wheel_binary
     output_wheel = ctx.outputs.wheel
 
     args = ctx.actions.args()
+    args.add("--project-name", ctx.attr.project_name)
     args.add("--output-name", output_wheel.path)
 
     deps = ctx.files.deps[:]
@@ -85,7 +86,7 @@ def _tf_wheel_impl(ctx):
     args.use_param_file("@%s", use_always = False)
     ctx.actions.run(
         arguments = [args],
-        inputs = srcs+deps+headers,
+        inputs = srcs + deps + headers + xla_aot,
         outputs = [output_wheel],
         executable = executable,
     )
@@ -98,6 +99,7 @@ tf_wheel = rule(
         "xla_aot_compiled": attr.label_list(allow_files = True),
         "py_version": attr.string(),
         "platform": attr.string(),
+        "project_name": attr.string(),
         "tf_version": attr.string(),
         "wheel_binary": attr.label(
             default = Label("//tensorflow/tools/pip_package:build_pip_package_py"),
@@ -106,7 +108,7 @@ tf_wheel = rule(
         ),
     },
     outputs = {
-        "wheel": "tensorflow-%{tf_version}-cp%{py_version}-cp%{py_version}-%{platform}.whl",
+        "wheel": "%{project_name}-%{tf_version}-cp%{py_version}-cp%{py_version}-%{platform}.whl",
     },
     implementation = _tf_wheel_impl,
 )

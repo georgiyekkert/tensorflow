@@ -14,6 +14,7 @@
 
 
 import argparse
+import glob
 import os
 import pathlib
 import sys
@@ -23,79 +24,102 @@ import tempfile
 
 from typing import Sequence
 
+
 def create_temp_dir():
   return tempfile.TemporaryDirectory(prefix="tensorflow_wheel")
+
 
 def parse_args():
   parser = argparse.ArgumentParser(
       description='Helper for building pip packages', fromfile_prefix_chars='@')
   parser.add_argument(
-      "--output-name",
-      required=True,
-      help="Output file for the wheel, mandatory"
-  )
+      "--output-name", required=True,
+      help="Output file for the wheel, mandatory")
+  parser.add_argument("--project-name", required=True, help="Name")
   parser.add_argument(
-      "--headers",
-      help="header files of the wheel",
-      action='append'
-  )
-  parser.add_argument(
-      "--srcs",
-      help="header files of the wheel",
-      action='append'
-  )
-  parser.add_argument(
-      "--deps",
-      help="header files of the wheel",
-      action='append'
-  )
-  parser.add_argument(
-      "--xla_aot",
-      help="xla aot compiled sources",
-      action='append'
-  )
+      "--headers", help="header files of the wheel", action='append')
+  parser.add_argument("--srcs", help="header files of the wheel",
+                      action='append')
+  parser.add_argument("--deps", help="header files of the wheel",
+                      action='append')
+  parser.add_argument("--xla_aot", help="xla aot compiled sources",
+                      action='append')
   return parser.parse_args()
 
-headers_to_exclude = [
-    "external/pypi",
-    "local_config_cuda/cuda/_virtual_includes",
-    "local_config_tensorrt",
-    "python_x86_64",
-    "python_aarch64",
-    "llvm-project/llvm/",
-]
+
+def prepare_headers(headers, srcs_dir):
+  headers_to_exclude = [
+      "external/pypi",
+      "external/jsoncpp_git/src",
+      "local_config_cuda/cuda/_virtual_includes",
+      "local_config_tensorrt",
+      "python_x86_64",
+      "python_aarch64",
+      "llvm-project/llvm/",
+  ]
+
+  path_to_replace = {
+      "external/com_google_absl/": "",
+      "external/eigen_archive/": "",
+      "external/jsoncpp_git/": "",
+      "external/com_google_protobuf/src/": "",
+      "bazel-out/k8-opt/bin/external/local_xla/": "/tensorflow/compiler",
+      "bazel-out/k8-opt/bin/external/local_tsl/": "/tensorflow",
+      "external/local_xla/": "/tensorflow/compiler",
+      "external/local_tsl/": "/tensorflow",
+      "bazel-out/k8-opt/bin/": "",
+  }
+
+
+  for file in headers:
+    if file.endswith("cc.inc"):
+      continue
+
+    if any(i in file for i in headers_to_exclude):
+      continue
+
+    for path, val in path_to_replace.items():
+      if path in file:
+        copy_file(file, srcs_dir + val, path)
+        break
+    else:
+      copy_file(file, srcs_dir, None)
+
+
+def prepare_deps(deps, srcs_dir):
+  path_to_exclude = [
+      "bazel-out/k8-opt/bin/external/pasta",
+      "bazel-out/k8-opt/bin/external/flatbuffers",
+      "bazel-out/k8-opt/bin/external/com_google_protobuf",
+      "external/"
+  ]
+
+  path_to_replace = {
+      "bazel-out/k8-opt/bin/external/local_xla/": "/tensorflow/compiler",
+      "bazel-out/k8-opt/bin/external/local_tsl/": "/tensorflow",
+      "bazel-out/k8-opt/bin/": "",
+  }
+
+  for file in deps:
+    if any(file.startswith(i) for i in path_to_exclude):
+      continue
+
+    if file.endswith(".proto"):
+      copy_file(file, srcs_dir+"/tensorflow/include/", None)
+      continue
+
+    for path, val in path_to_replace.items():
+      if path in file:
+        copy_file(file, srcs_dir + val, path, create_init=True)
+        break
+    else:
+      copy_file(file, srcs_dir, None, create_init=True)
 
 
 def prepare_wheel(headers, deps, srcs, aot, srcs_dir):
-  for file in headers:
-    if any(i in file for i in headers_to_exclude):
-      continue
-    elif "bazel-out/k8-opt/bin/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/include", "bazel-out/k8-opt/bin/")
-    elif "external/com_google_absl/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/include", "external/com_google_absl/")
-    elif "external/eigen_archive/Eigen/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/include", "external/eigen_archive/")
-    elif "external/eigen_archive/unsupported/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/include", "external/eigen_archive/")
-    elif "external/jsoncpp_git/include/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/include/include", "external/jsoncpp_git/include/")
-    elif "external/com_google_protobuf/src/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/include", "external/com_google_protobuf/src/")
-    else:
-      copy_file(file, srcs_dir+"/tensorflow/include", None)
-
-  for file in deps:
-    if "external/pypi" in file:
-      continue
-    elif "bazel-out/k8-opt/bin/external/local_xla/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/compiler/xla", "bazel-out/k8-opt/bin/external/local_xla/", create_init=True)
-    elif "bazel-out/k8-opt/bin/external/local_tsl/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/tsl", "bazel-out/k8-opt/bin/external/local_tsl/", create_init=True)
-    elif "bazel-out/k8-opt/bin/" in file:
-      copy_file(file, srcs_dir, "bazel-out/k8-opt/bin/", create_init=True)
-    else:
-      copy_file(file, srcs_dir, None, create_init=True)
+  local_config_python(srcs_dir+"/tensorflow/include/external/local_config_python/")
+  prepare_headers(headers, srcs_dir + "/tensorflow/include/")
+  prepare_deps(deps, srcs_dir)
 
   for file in srcs:
     if "bazel-out/k8-opt/bin/" in file:
@@ -105,15 +129,39 @@ def prepare_wheel(headers, deps, srcs, aot, srcs_dir):
 
   for file in aot:
     if "external/local_tsl/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/xla_aot_runtime_src", "external/local_tsl/")
+      copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
+                "external/local_tsl/")
     elif "external/local_xla/" in file:
-      copy_file(file, srcs_dir+"/tensorflow/xla_aot_runtime_src", "external/local_xla/")
+      copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
+                "external/local_xla/")
     else:
-      copy_file(file, srcs_dir+"/tensorflow/xla_aot_runtime_src", None)
+      copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src", None)
 
-  shutil.move(srcs_dir+"/tensorflow/tools/pip_package/THIRD_PARTY_NOTICES.txt", srcs_dir+"/tensorflow/THIRD_PARTY_NOTICES.txt")
+  shutil.move(
+      srcs_dir + "/tensorflow/tools/pip_package/THIRD_PARTY_NOTICES.txt",
+      srcs_dir + "/tensorflow/THIRD_PARTY_NOTICES.txt")
+
+
 def is_windows() -> bool:
   return sys.platform.startswith("win32")
+
+
+def local_config_python(dst_dir):
+  shutil.copytree("external/pypi_numpy/site-packages/numpy/core/include", dst_dir+"/numpy_include")
+  shutil.copytree(glob.glob("external/python_*/include/python*")[0], dst_dir+"/python_include")
+
+
+def create_init_files(dst_dir):
+  for root, dirs, files in os.walk(dst_dir):
+    if any(file.endswith(".py") or file.endswith(".so") for file in files):
+      curr_dir = root
+      while curr_dir != dst_dir:
+        init_path = os.path.join(curr_dir, "__init__.py")
+        if not os.path.exists(init_path):
+          open(init_path, "w").close()
+
+        curr_dir = os.path.dirname(curr_dir)
+
 
 def copy_file(
     src_file: str,
@@ -128,18 +176,17 @@ def copy_file(
   dstdir = os.path.join(dst_dir, os.path.dirname(src_file_no_prefix))
   os.makedirs(dstdir, exist_ok=True)
   if create_init:
-    if not os.path.exists(dstdir+"/__init__.py"):
-      open(dstdir+"/__init__.py", 'a').close()
+    if not os.path.exists(dstdir + "/__init__.py"):
+      open(dstdir + "/__init__.py", 'a').close()
 
   shutil.copy(src_file, dstdir)
 
-def build_wheel(name, dir):
-  #copy_file("tensorflow/tools/pip_package/MANIFEST.in", dir, "tensorflow/tools/pip_package/")
-  shutil.move(dir+"/tensorflow/tools/pip_package/MANIFEST.in", dir+"/MANIFEST.in")
-  copy_file("tensorflow/tools/pip_package/setup.py", dir, "tensorflow/tools/pip_package/")
-  #s = os.listdir(dir)
-  #with open("tensorflow/tools/pip_package/test.txt", "w+") as file:
-  #  file.write(",".join(s))
+
+def build_wheel(name, dir, project_name):
+  shutil.move(dir + "/tensorflow/tools/pip_package/MANIFEST.in",
+              dir + "/MANIFEST.in")
+  copy_file("tensorflow/tools/pip_package/setup.py", dir,
+            "tensorflow/tools/pip_package/")
 
   subprocess.run(
       [sys.executable, "tensorflow/tools/pip_package/setup.py", "bdist_wheel",
@@ -152,12 +199,14 @@ if __name__ == "__main__":
   deps = args.deps
   srcs = args.srcs
   aot = args.xla_aot
+  project_name = args.project_name
 
   temp_dir = create_temp_dir()
   temp_dir_path = temp_dir.name
   try:
-    os.makedirs(temp_dir_path+"/tensorflow/include", exist_ok=True)
+    os.makedirs(temp_dir_path + "/tensorflow/include", exist_ok=True)
     prepare_wheel(headers, deps, srcs, aot, temp_dir_path)
-    build_wheel(os.getcwd()+"/"+args.output_name, temp_dir_path)
+    create_init_files(temp_dir_path+"/tensorflow")
+    build_wheel(os.getcwd() + "/" + args.output_name, temp_dir_path, project_name)
   finally:
     temp_dir.cleanup()

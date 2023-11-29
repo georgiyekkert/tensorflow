@@ -352,7 +352,6 @@ GENERATED_SO = [
     #"//tensorflow/lite/experimental/microfrontend:python/ops/_audio_microfrontend_op", .so
 ]
 
-
 SO = [
     "//tensorflow/compiler/tf2xla/ops:_xla_ops.so",
     "//tensorflow/core/kernels:libtfkernel_sobol_op.so",
@@ -361,35 +360,40 @@ SO = [
     "//tensorflow/python/util:pywrap_xla_ops.so",
 ]
 
-
 py_binary(
     name = "build_pip_package_py",
     srcs = [
         "build_pip_package.py",
     ],
     main = "build_pip_package.py",
+    deps = [
+        "@pypi_setuptools//:pkg",
+        "@pypi_wheel//:pkg",
+    ],
 )
 
 tf_wheel(
     name = "test_wheel",
     srcs = [
-        ":cc_deps"
-    ] + SO_SRCS + SO,  #COMMON_PIP_DEPS,
-    platform = "linux_x86_64",
-    py_version = HERMETIC_PYTHON_VERSION.replace(".", ""),
-    tf_version = VERSION,
+        ":cc_deps",
+    ] + SO + SO_SRCS,  #COMMON_PIP_DEPS,
     headers = [
         ":included_headers",
     ],
+    platform = "linux_x86_64",
+    project_name = "tensorflow_cpu",
+    py_version = HERMETIC_PYTHON_VERSION.replace(".", ""),
+    tf_version = VERSION,
     xla_aot_compiled = [
         "//tensorflow/compiler/tf2xla:xla_compiled_cpu_runtime_srcs",
         ":xla_cmake",
-        ],
+    ],
     deps = [
         "MANIFEST.in",
         "THIRD_PARTY_NOTICES.txt",
         "setup.py",
         ":py_deps",
+        "//tensorflow/core:protos_all_proto_srcs",
     ],
 )
 

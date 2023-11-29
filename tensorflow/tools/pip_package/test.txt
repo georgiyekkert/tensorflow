@@ -1,1 +1,1 @@
-tensorflow,third_party,MANIFEST.in,setup.py
+1.txt,bazel-out,tensorflow,third_party,external,local-spawn-runner.14891277763395637595/usr/local/google/home/georgiie/.cache/bazel/_bazel_georgiie/187171952a82e99214f53f7a4b7231dd/execroot/org_tensorflow
