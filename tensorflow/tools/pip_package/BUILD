@@ -6,11 +6,12 @@ load("@local_config_syslibs//:build_defs.bzl", "if_not_system_lib")
 load("//tensorflow:tensorflow.bzl", "filegroup_as_file", "transitive_hdrs")
 load("//tensorflow/core/platform:build_config_root.bzl", "tf_additional_license_deps")
 load("//third_party/mkl:build_defs.bzl", "if_enable_mkl", "if_mkl", "if_mkl_ml")
-load("//tensorflow/tools/pip_package:tf_wheel.bzl", "tf_wheel", "transitive_py_deps")
+load("//tensorflow/tools/pip_package/utils:tf_wheel.bzl", "tf_wheel")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("//tensorflow:tensorflow.bzl", "VERSION")
 load("@python//:defs.bzl", "host_platform")
-load("//tensorflow/tools/pip_package:cc_deps.bzl", "transitive_cc_deps")
+load("//tensorflow/tools/pip_package/utils:py_deps.bzl", "transitive_py_deps")
+load("//tensorflow/tools/pip_package/utils:cc_deps.bzl", "transitive_cc_deps")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -376,12 +377,12 @@ tf_wheel(
     name = "test_wheel",
     srcs = [
         ":cc_deps",
-    ] + SO + SO_SRCS,  #COMMON_PIP_DEPS,
+    ] + SO, # + SO_SRCS,  #COMMON_PIP_DEPS,
     headers = [
         ":included_headers",
     ],
     platform = "linux_x86_64",
-    project_name = "tensorflow_cpu",
+    project_name = "tensorflow",
     py_version = HERMETIC_PYTHON_VERSION.replace(".", ""),
     tf_version = VERSION,
     xla_aot_compiled = [

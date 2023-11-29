@@ -12,21 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import argparse
 import glob
 import os
-import pathlib
 import sys
 import subprocess
 import shutil
 import tempfile
 
-from typing import Sequence
-
-
-def create_temp_dir():
-  return tempfile.TemporaryDirectory(prefix="tensorflow_wheel")
 
 
 def parse_args():
@@ -48,6 +41,12 @@ def parse_args():
 
 
 def prepare_headers(headers, srcs_dir):
+  """
+  Rearrange header files in the source directory
+  :param headers:
+  :param srcs_dir:
+  :return:
+  """
   headers_to_exclude = [
       "external/pypi",
       "external/jsoncpp_git/src",
@@ -110,10 +109,10 @@ def prepare_deps(deps, srcs_dir):
 
     for path, val in path_to_replace.items():
       if path in file:
-        copy_file(file, srcs_dir + val, path, create_init=True)
+        copy_file(file, srcs_dir + val, path)
         break
     else:
-      copy_file(file, srcs_dir, None, create_init=True)
+      copy_file(file, srcs_dir, None)
 
 
 def prepare_wheel(headers, deps, srcs, aot, srcs_dir):
@@ -127,24 +126,22 @@ def prepare_wheel(headers, deps, srcs, aot, srcs_dir):
     else:
       copy_file(file, srcs_dir, None)
 
-  for file in aot:
-    if "external/local_tsl/" in file:
-      copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
-                "external/local_tsl/")
-    elif "external/local_xla/" in file:
-      copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
-                "external/local_xla/")
-    else:
-      copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src", None)
+  #for file in aot:
+  #  if "external/local_tsl/" in file:
+  #    copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
+  #              "external/local_tsl/")
+  #  elif "external/local_xla/" in file:
+  #    copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src",
+  #              "external/local_xla/")
+  #  else:
+  #    copy_file(file, srcs_dir + "/tensorflow/xla_aot_runtime_src", None)
 
-  shutil.move(
-      srcs_dir + "/tensorflow/tools/pip_package/THIRD_PARTY_NOTICES.txt",
-      srcs_dir + "/tensorflow/THIRD_PARTY_NOTICES.txt")
-
+  #shutil.move(
+  #    srcs_dir + "/tensorflow/tools/pip_package/THIRD_PARTY_NOTICES.txt",
+  #    srcs_dir + "/tensorflow/THIRD_PARTY_NOTICES.txt")
 
 def is_windows() -> bool:
   return sys.platform.startswith("win32")
-
 
 def local_config_python(dst_dir):
   shutil.copytree("external/pypi_numpy/site-packages/numpy/core/include", dst_dir+"/numpy_include")
@@ -195,18 +192,14 @@ def build_wheel(name, dir, project_name):
 
 if __name__ == "__main__":
   args = parse_args()
-  headers = args.headers
-  deps = args.deps
-  srcs = args.srcs
-  aot = args.xla_aot
   project_name = args.project_name
 
-  temp_dir = create_temp_dir()
+  temp_dir = tempfile.TemporaryDirectory(prefix="tensorflow_wheel")
   temp_dir_path = temp_dir.name
   try:
-    os.makedirs(temp_dir_path + "/tensorflow/include", exist_ok=True)
-    prepare_wheel(headers, deps, srcs, aot, temp_dir_path)
+    prepare_wheel(args.headers, args.deps, args.srcs, args.xla_aot,
+                  temp_dir_path)
     create_init_files(temp_dir_path+"/tensorflow")
-    build_wheel(os.getcwd() + "/" + args.output_name, temp_dir_path, project_name)
+    build_wheel(os.path.dirname(os.getcwd() + "/" + args.output_name), temp_dir_path, project_name)
   finally:
     temp_dir.cleanup()
