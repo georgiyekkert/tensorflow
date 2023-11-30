@@ -191,7 +191,7 @@ SO_SRCS = [
 ]
 
 GENERATED_SO = [
-    #"//tensorflow/core/kernels:libtfkernel_sobol_op",  .so?
+    #"//tensorflow/core/kernels:libtfkernel_sobol_op",
     "//tensorflow/python:flags_pybind",
     "//tensorflow/python:_pywrap_py_exception_registry",
     "//tensorflow/python:_pywrap_toco_api",
@@ -278,6 +278,16 @@ platforms = {
     "x86_64-unknown-linux-gnu": "linux_x86_64"
 }
 
+transitive_cc_deps(
+    name = "cc_deps",
+    deps = GENERATED_SO,
+)
+
+transitive_py_deps(
+    name = "py_deps",
+    deps = COMMON_PIP_DEPS,
+)
+
 tf_wheel(
     name = "tensorflow",
     srcs = [":cc_deps",
@@ -298,12 +308,42 @@ tf_wheel(
     ],
 )
 
-transitive_cc_deps(
-    name = "cc_deps",
-    deps = GENERATED_SO,
+tf_wheel(
+    name = "tensorflow_tpu",
+    srcs = [":cc_deps",
+            "MANIFEST.in",
+            "THIRD_PARTY_NOTICES.txt",
+            "setup.py",
+            ":py_deps",] + SO + SO_SRCS,
+    headers = [
+        ":included_headers",
+        "//tensorflow/core:protos_all_proto_srcs",
+    ],
+    platform = platforms[host_platform],
+    py_version = HERMETIC_PYTHON_VERSION.replace(".", ""),
+    tf_version = VERSION,
+    xla_aot_compiled = [
+        "//tensorflow/compiler/tf2xla:xla_compiled_cpu_runtime_srcs",
+        ":xla_cmake",
+    ],
 )
 
-transitive_py_deps(
-    name = "py_deps",
-    deps = COMMON_PIP_DEPS,
+tf_wheel(
+    name = "tf-nightly",
+    srcs = [":cc_deps",
+            "MANIFEST.in",
+            "THIRD_PARTY_NOTICES.txt",
+            "setup.py",
+            ":py_deps",] + SO + SO_SRCS,
+    headers = [
+        ":included_headers",
+        "//tensorflow/core:protos_all_proto_srcs",
+    ],
+    platform = platforms[host_platform],
+    py_version = HERMETIC_PYTHON_VERSION.replace(".", ""),
+    tf_version = VERSION,
+    xla_aot_compiled = [
+        "//tensorflow/compiler/tf2xla:xla_compiled_cpu_runtime_srcs",
+        ":xla_cmake",
+    ],
 )

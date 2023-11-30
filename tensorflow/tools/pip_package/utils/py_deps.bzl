@@ -12,32 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Bazel rule for collecting the header files that a target depends on.
-def _transitive_hdrs_impl(ctx):
+# Bazel rule for collecting the py files that a target depends on.
+def _transitive_py_impl(ctx):
     outputs = _get_transitive_py_deps([], ctx.attr.deps)
 
     #print(outputs)
     return DefaultInfo(files = outputs)
 
-_transitive_hdrs = rule(
+_transitive_py = rule(
     attrs = {
         "deps": attr.label_list(
             allow_files = True,
             providers = [PyInfo],
         ),
     },
-    implementation = _transitive_hdrs_impl,
+    implementation = _transitive_py_impl,
 )
 
 def transitive_py_deps(name, deps = [], **kwargs):
-    _transitive_hdrs(name = name + "_gather", deps = deps)
+    _transitive_py(name = name + "_gather", deps = deps)
     native.filegroup(name = name, srcs = [":" + name + "_gather"])
 
 def _get_transitive_py_deps(src, deps):
-    """Obtain the header files for a target and its transitive dependencies.
+    """Obtain the py files for a target and its transitive dependencies.
 
       Args:
-        src: a list of header files
+        src: a list of py files
         deps: a list of targets that are direct dependencies
 
       Returns:
@@ -47,11 +47,3 @@ def _get_transitive_py_deps(src, deps):
         src,
         transitive = [dep[PyInfo].transitive_sources for dep in deps],
     )
-
-def _quote(filename, protect = "="):
-    """Quote the filename, by escaping = by \\= and \\ by \\\\"""
-    return filename.replace("\\", "\\\\").replace(protect, "\\" + protect)
-
-def dest_path(file):
-    ret = file.short_path
-    return ret
