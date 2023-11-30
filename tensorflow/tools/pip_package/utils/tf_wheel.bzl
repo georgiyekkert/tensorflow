@@ -17,7 +17,7 @@ def _tf_wheel_impl(ctx):
     output_wheel = ctx.outputs.wheel
 
     args = ctx.actions.args()
-    args.add("--project-name", ctx.attr.project_name)
+    args.add("--project-name", ctx.attr.name)
     args.add("--output-name", output_wheel.path)
 
     deps = ctx.files.deps[:]
@@ -55,7 +55,6 @@ tf_wheel = rule(
         "xla_aot_compiled": attr.label_list(allow_files = True),
         "py_version": attr.string(),
         "platform": attr.string(),
-        "project_name": attr.string(),
         "tf_version": attr.string(),
         "wheel_binary": attr.label(
             default = Label("//tensorflow/tools/pip_package:build_pip_package_py"),
@@ -64,7 +63,7 @@ tf_wheel = rule(
         ),
     },
     outputs = {
-        "wheel": "%{project_name}-%{tf_version}-cp%{py_version}-cp%{py_version}-%{platform}.whl",
+        "wheel": "%{name}-%{tf_version}-cp%{py_version}-cp%{py_version}-%{platform}.whl",
     },
     implementation = _tf_wheel_impl,
 )

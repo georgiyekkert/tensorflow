@@ -369,15 +369,15 @@ py_binary(
 )
 
 tf_wheel(
-    name = "test_wheel",
+    name = "tensorflow",
     srcs = [
         ":cc_deps",
     ] + SO, # + SO_SRCS
     headers = [
         ":included_headers",
+        "//tensorflow/core:protos_all_proto_srcs",
     ],
     platform = "linux_x86_64",
-    project_name = "tensorflow",
     py_version = HERMETIC_PYTHON_VERSION.replace(".", ""),
     tf_version = VERSION,
     xla_aot_compiled = [
@@ -389,7 +389,6 @@ tf_wheel(
         "THIRD_PARTY_NOTICES.txt",
         "setup.py",
         ":py_deps",
-        "//tensorflow/core:protos_all_proto_srcs",
     ],
 )
 

@@ -3349,6 +3349,7 @@ def tf_python_pybind_extension_opensource(
         win_def_file = win_def_file,
     )
 
+
 # Export open source version of tf_python_pybind_extension under base name as well.
 tf_python_pybind_extension = tf_python_pybind_extension_opensource
 
