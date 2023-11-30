@@ -29,10 +29,8 @@ def parse_args():
       help="Output file for the wheel, mandatory")
   parser.add_argument("--project-name", required=True, help="Name")
   parser.add_argument(
-      "--headers", help="header files of the wheel", action='append')
-  parser.add_argument("--srcs", help="header files of the wheel",
-                      action='append')
-  parser.add_argument("--deps", help="header files of the wheel",
+      "--headers", help="header files for the wheel", action='append')
+  parser.add_argument("--srcs", help="souirce files for the wheel",
                       action='append')
   parser.add_argument("--xla_aot", help="xla aot compiled sources",
                       action='append')
@@ -78,9 +76,9 @@ def prepare_headers(headers, srcs_dir):
         break
     else:
       copy_file(file, srcs_dir)
+  create_local_config_python(srcs_dir+"external/local_config_python/")
 
-
-def prepare_deps(deps, srcs_dir):
+def prepare_srcs(deps, srcs_dir):
   path_to_replace = {
       "external/local_xla/": "/tensorflow/compiler",
       "external/local_tsl/": "/tensorflow",
@@ -95,10 +93,6 @@ def prepare_deps(deps, srcs_dir):
       if "external" not in file:
         copy_file(file, srcs_dir)
 
-def prepare_so(so, srcs_dir):
-  for file in so:
-    copy_file(file, srcs_dir)
-
 def prepare_aot(aot, srcs_dir):
   for file in aot:
     if "external/local_tsl/" in file:
@@ -110,11 +104,9 @@ def prepare_aot(aot, srcs_dir):
     else:
       copy_file(file, srcs_dir)
 
-def prepare_wheel_srcs(headers, deps, srcs, aot, srcs_dir):
-  create_local_config_python(srcs_dir+"/tensorflow/include/external/local_config_python/")
+def prepare_wheel_srcs(headers, srcs, aot, srcs_dir):
   prepare_headers(headers, srcs_dir + "/tensorflow/include/")
-  prepare_deps(deps, srcs_dir)
-  prepare_so(srcs, srcs_dir)
+  prepare_srcs(srcs, srcs_dir)
   prepare_aot(aot, srcs_dir+"/tensorflow/xla_aot_runtime_src")
   create_init_files(srcs_dir+"/tensorflow")
   shutil.move(
@@ -179,7 +171,7 @@ if __name__ == "__main__":
   temp_dir = tempfile.TemporaryDirectory(prefix="tensorflow_wheel")
   temp_dir_path = temp_dir.name
   try:
-    prepare_wheel_srcs(args.headers, args.deps, args.srcs, args.xla_aot,
+    prepare_wheel_srcs(args.headers, args.srcs, args.xla_aot,
                        temp_dir_path)
     build_wheel(os.path.dirname(os.getcwd() + "/" + args.output_name),
                 temp_dir_path, args.project_name)

@@ -79,18 +79,6 @@ transitive_hdrs(
     ]),
 )
 
-py_binary(
-    name = "simple_console",
-    srcs = ["simple_console.py"],
-    srcs_version = "PY3",
-    deps = ["//tensorflow:tensorflow_py"],
-)
-
-filegroup_as_file(
-    name = "xla_compiled_cpu_runtime_srcs.txt",
-    dep = "//tensorflow/compiler/tf2xla:xla_compiled_cpu_runtime_srcs",
-)
-
 filegroup(
     name = "xla_cmake",
     srcs = ["xla_build/CMakeLists.txt"],
@@ -99,19 +87,6 @@ filegroup(
 # Add dynamic kernel dso files here.
 DYNAMIC_LOADED_KERNELS = [
     "//tensorflow/core/kernels:libtfkernel_sobol_op.so",
-]
-
-PIP_DATA = [
-    "licenses",
-    "setup.py",
-    "MANIFEST.in",
-    "README",
-    ":included_headers",
-    ":xla_compiled_cpu_runtime_srcs.txt_file",
-    ":xla_cmake",
-    "//tensorflow/core:protos_all_proto_srcs",
-    "//tensorflow/python/framework:meta_graph_testdata",
-    "//tensorflow/python/kernel_tests/linalg/testdata:self_adjoint_eig_op_test_files",
 ]
 
 COMMON_PIP_DEPS = [
@@ -210,75 +185,6 @@ COMMON_PIP_DEPS = [
     "//tensorflow:tensorflow_py",
 ]
 
-filegroup(
-    name = "licenses",
-    data = [
-        "//:LICENSE",
-        "//third_party/icu/data:LICENSE",
-        "@com_google_absl//:LICENSE",
-        "@com_google_protobuf//:LICENSE",
-        "@curl//:COPYING",
-        "@ducc//:LICENSE",
-        "@flatbuffers//:LICENSE",
-        "@gemmlowp//:LICENSE",
-        "@libjpeg_turbo//:LICENSE.md",
-        "@llvm-project//llvm:LICENSE.TXT",
-        "@llvm-project//mlir:LICENSE.TXT",
-        "@local_config_tensorrt//:LICENSE",
-        "@ml_dtypes//:LICENSE",
-        "@org_brotli//:LICENSE",
-        "@pasta//:LICENSE",
-        "@png//:LICENSE",
-        "@ruy//:LICENSE",
-        "@six_archive//:LICENSE",
-        "@snappy//:COPYING",
-        "@stablehlo//:LICENSE",
-        "@tf_runtime//:LICENSE",
-    ] + select({
-        "//tensorflow:android": [],
-        "//tensorflow:ios": [],
-        "//tensorflow:linux_s390x": [],
-        "//tensorflow:windows": [],
-        "//conditions:default": [
-            "@com_github_googlecloudplatform_google_cloud_cpp//:LICENSE",
-        ],
-    }) + select({
-        "@local_tsl//tsl:with_numa_support": [
-            "@hwloc//:COPYING",
-        ],
-        "//conditions:default": [],
-    }) + if_cuda([
-        "@cub_archive//:LICENSE.TXT",
-        "@local_config_nccl//:LICENSE",
-    ]) + if_mkl([
-        "//third_party/mkl_dnn:LICENSE",
-    ]) + if_enable_mkl(["//third_party/mkl:LICENSE"]) + if_not_system_lib(
-        "absl_py",
-        [
-            "@absl_py//:LICENSE",
-        ],
-    ) + tf_additional_license_deps(),
-)
-
-sh_binary(
-    name = "build_pip_package",
-    srcs = ["build_pip_package.sh"],
-    data = COMMON_PIP_DEPS +
-           select({
-               "//tensorflow:windows": [
-                   "//tensorflow/python:pywrap_tensorflow_import_lib_file",
-               ],
-               "//conditions:default": [],
-           }) +
-           select({
-               "//tensorflow:dynamic_loaded_kernels": DYNAMIC_LOADED_KERNELS,
-               "//conditions:default": [],
-           }) + if_mkl_ml(["//third_party/mkl:intel_binary_blob"]) + [
-        "//tensorflow:tf_python_api_gen_v2",
-    ],
-    visibility = ["//visibility:public"],
-)
-
 SO_SRCS = [
     "//tensorflow:tensorflow_framework",
     "//tensorflow:tensorflow_cc",
@@ -368,27 +274,27 @@ py_binary(
     ],
 )
 
+platforms = {
+    "x86_64-unknown-linux-gnu": "linux_x86_64"
+}
+
 tf_wheel(
     name = "tensorflow",
-    srcs = [
-        ":cc_deps",
-    ] + SO, # + SO_SRCS
+    srcs = [":cc_deps",
+            "MANIFEST.in",
+            "THIRD_PARTY_NOTICES.txt",
+            "setup.py",
+            ":py_deps",] + SO + SO_SRCS,
     headers = [
         ":included_headers",
         "//tensorflow/core:protos_all_proto_srcs",
     ],
-    platform = "linux_x86_64",
+    platform = platforms[host_platform],
     py_version = HERMETIC_PYTHON_VERSION.replace(".", ""),
     tf_version = VERSION,
     xla_aot_compiled = [
         "//tensorflow/compiler/tf2xla:xla_compiled_cpu_runtime_srcs",
         ":xla_cmake",
-    ],
-    deps = [
-        "MANIFEST.in",
-        "THIRD_PARTY_NOTICES.txt",
-        "setup.py",
-        ":py_deps",
     ],
 )
 

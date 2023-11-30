@@ -20,10 +20,6 @@ def _tf_wheel_impl(ctx):
     args.add("--project-name", ctx.attr.name)
     args.add("--output-name", output_wheel.path)
 
-    deps = ctx.files.deps[:]
-    for f in deps:
-        args.add("--deps=%s" % (f.path))
-
     headers = ctx.files.headers[:]
     for f in headers:
         args.add("--headers=%s" % (f.path))
@@ -42,7 +38,7 @@ def _tf_wheel_impl(ctx):
     args.use_param_file("@%s", use_always = False)
     ctx.actions.run(
         arguments = [args],
-        inputs = srcs + deps + headers + xla_aot,
+        inputs = srcs + headers + xla_aot,
         outputs = [output_wheel],
         executable = executable,
     )
@@ -50,7 +46,6 @@ def _tf_wheel_impl(ctx):
 tf_wheel = rule(
     attrs = {
         "srcs": attr.label_list(allow_files = True),
-        "deps": attr.label_list(allow_files = True),
         "headers": attr.label_list(allow_files = True),
         "xla_aot_compiled": attr.label_list(allow_files = True),
         "py_version": attr.string(),
