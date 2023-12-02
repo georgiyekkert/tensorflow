@@ -329,7 +329,7 @@ tf_wheel(
 )
 
 tf_wheel(
-    name = "tf-nightly",
+    name = "tf_nightly",
     srcs = [":cc_deps",
             "MANIFEST.in",
             "THIRD_PARTY_NOTICES.txt",

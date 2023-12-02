@@ -16,6 +16,7 @@ def _transitive_cc_deps_impl(ctx):
     srcs = []
     for i in ctx.attr.deps:
         temp = []
+
         for s in i[OutputGroupInfo]._hidden_top_level_INTERNAL_.to_list():
             if s.dirname.startswith("bazel-out/k8-opt/bin/_solib_k8/"):
                 continue

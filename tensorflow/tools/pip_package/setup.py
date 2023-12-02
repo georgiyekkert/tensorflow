@@ -284,7 +284,6 @@ class InstallHeaders(Command):
     return self.copy_file(header, install_dir)
 
   def run(self):
-    pass
     hdrs = self.distribution.headers
     if not hdrs:
       return
