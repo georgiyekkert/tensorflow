@@ -160,9 +160,14 @@ def build_wheel(name, dir, project_name):
   copy_file("tensorflow/tools/pip_package/setup.py", dir,
             "tensorflow/tools/pip_package/")
 
+  env = os.environ.copy()
+  if is_windows():
+    env["HOME"] = "C:"
+    env["HOMEPATH"] = "C:"
+  env["project_name"] = project_name
   subprocess.run(
       [sys.executable, "tensorflow/tools/pip_package/setup.py", "bdist_wheel",
-       f"--dist-dir={name}"], check=True, cwd=dir)
+       f"--dist-dir={name}"], check=True, cwd=dir, env=env)
 
 
 if __name__ == "__main__":

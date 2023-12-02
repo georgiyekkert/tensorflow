@@ -59,6 +59,8 @@ if '--project_name' in sys.argv:
   project_name = sys.argv[project_name_idx + 1]
   sys.argv.remove('--project_name')
   sys.argv.pop(project_name_idx)
+elif os.environ.get('project_name', None):
+  project_name = os.environ['project_name']
 
 
 collaborator_build = False
