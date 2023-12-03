@@ -16,18 +16,24 @@ def _transitive_cc_deps_impl(ctx):
     srcs = []
     for i in ctx.attr.deps:
         temp = []
-
+        extenstions = [".so", ".pyd", ".pyi", ".dll", ".dylib", ".lib", ".pd"]
         for s in i[OutputGroupInfo]._hidden_top_level_INTERNAL_.to_list():
-            if s.dirname.startswith("bazel-out/k8-opt/bin/_solib_k8/"):
+            if "_solib_k8/" in s.dirname:
                 continue
-            if s.dirname.startswith("external/pypi"):
+            if not any([s.basename.endswith(ext) for ext in extenstions]):
+              continue
+            if s.basename.startswith("libtensorflow_S"):
                 continue
-            if s.basename.startswith("_solib_k8/"):
-                continue
-            if not s.basename.endswith(".so") and not s.basename.endswith(".pyi") and not s.basename.endswith(".pyd"):
-                continue
-            if s.basename.startswith("libtensorflow_Spython_"):
-                continue
+            #if s.dirname.startswith("bazel-out/k8-opt/bin/_solib_k8/"):
+            #    continue
+            #if s.dirname.startswith("external/pypi"):
+            #    continue
+            #if s.basename.startswith("_solib_k8/"):
+            #    continue
+            #if not s.basename.endswith(".so") and not s.basename.endswith(".pyi") and not s.basename.endswith(".pyd"):
+            #    continue
+            #if s.basename.startswith("libtensorflow_Spython_"):
+            #    continue
             temp.append(s)
         srcs.extend(temp)
     return DefaultInfo(files=depset(
