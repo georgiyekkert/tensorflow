@@ -229,7 +229,6 @@ function prepare_src() {
         fi
       else
         echo "Libtpu.so is not found in $(real_path ./tensorflow/lib/)"
-        exit 1
       fi
     fi
     cp -LR \
