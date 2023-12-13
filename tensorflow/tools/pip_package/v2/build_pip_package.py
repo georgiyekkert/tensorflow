@@ -235,7 +235,9 @@ def create_local_config_python(dst_dir: str) -> None:
 def build_wheel(dir_path: str, cwd: str, project_name: str) -> None:
   env = os.environ.copy()
   if is_windows():
+    # HOMEPATH is not set by bazel but it's required by setuptools.
     env["HOMEPATH"] = "C:"
+  # project_name is needed by setup.py.
   env["project_name"] = project_name
 
   subprocess.run(

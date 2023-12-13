@@ -19,19 +19,20 @@ def _output_deps_impl(ctx):
         temp = []
 
         # we only need selected extensions
-        extenstions = [".so", ".pyd", ".pyi", ".dll", ".dylib", ".lib", ".pd"]
+        extensions = ctx.attr.extensions
+        names_to_exclude = ctx.attr.names_to_exclude
         for s in i[OutputGroupInfo]._hidden_top_level_INTERNAL_.to_list():
             if "_solib" in s.dirname:
                 continue
-            if not any([s.basename.endswith(ext) for ext in extenstions]):
+            if not any([s.basename.endswith(ext) for ext in extensions]):
                 continue
-            if s.basename.startswith("libtensorflow"):
+            if any([s.basename.startswith(name) for name in names_to_exclude]):
                 continue
             temp.append(s)
         srcs.extend(temp)
-    return DefaultInfo(files = depset(
+    return [DefaultInfo(files = depset(
         srcs,
-    ))
+    ))]
 
 _output_deps = rule(
     attrs = {
@@ -39,6 +40,10 @@ _output_deps = rule(
             allow_files = True,
             providers = [OutputGroupInfo],
         ),
+        "extensions": attr.string_list(
+            default = [".so", ".pyd", ".pyi", ".dll", ".dylib", ".lib", ".pd"],
+        ),
+        "names_to_exclude": attr.string_list(default = ["libtensorflow"]),
     },
     implementation = _output_deps_impl,
 )

@@ -13,28 +13,24 @@
 # limitations under the License.
 """Rule for collecting python files that a target depends on."""
 
-def _transitive_py_impl(ctx):
-    outputs = _get_transitive_py_deps([], ctx.attr.deps)
+def _transitive_py_deps_impl(ctx):
+    outputs = depset(
+        [],
+        transitive = [dep[PyInfo].transitive_sources for dep in ctx.attr.deps],
+    )
 
     return DefaultInfo(files = outputs)
 
-_transitive_py = rule(
+_transitive_py_deps = rule(
     attrs = {
         "deps": attr.label_list(
             allow_files = True,
             providers = [PyInfo],
         ),
     },
-    implementation = _transitive_py_impl,
+    implementation = _transitive_py_deps_impl,
 )
 
 def transitive_py_deps(name, deps = []):
-    _transitive_py(name = name + "_gather", deps = deps)
+    _transitive_py_deps(name = name + "_gather", deps = deps)
     native.filegroup(name = name, srcs = [":" + name + "_gather"])
-
-def _get_transitive_py_deps(src, deps):
-    """Obtain the py files for a target and its transitive dependencies."""
-    return depset(
-        src,
-        transitive = [dep[PyInfo].transitive_sources for dep in deps],
-    )
