@@ -507,6 +507,12 @@ static std::string_view StreamCaptureModeToString(
   return ::tsl::OkStatus();
 }
 
+/* static */ tsl::Status GpuDriver::StreamBeginCaptureToGraph(
+    GpuStreamHandle stream, GpuGraphHandle graph, StreamCaptureMode mode) {
+  return absl::UnimplementedError(
+      "StreamBeginCaptureToGraph is not implemented");
+}
+
 /* static */ tsl::Status GpuDriver::StreamEndCapture(GpuStreamHandle stream,
                                                      hipGraph_t* graph) {
   VLOG(2) << "End stream " << stream << " capture";
@@ -520,7 +526,7 @@ static std::string_view StreamCaptureModeToString(
 /* static */ tsl::Status GpuDriver::GraphInstantiate(
     hipGraphExec_t* exec, hipGraph_t graph,
     const GraphInstantiateFlags& flags) {
-  VLOG(2) << "Instante HIP executable graph from graph " << graph << " ("
+  VLOG(2) << "Instantiate HIP executable graph from graph " << graph << " ("
           << "auto_free_on_launch=" << flags.auto_free_on_launch << ", "
           << "device_launch=" << flags.device_launch << ", "
           << "use_node_priority=" << flags.use_node_prirotiy << ", "
@@ -537,6 +543,18 @@ static std::string_view StreamCaptureModeToString(
           << stream;
   RETURN_IF_ROCM_ERROR(wrap::hipGraphLaunch(exec, stream),
                        "Failed to launch HIP graph");
+  return ::tsl::OkStatus();
+}
+
+/* static */ tsl::Status GpuDriver::GraphNodeSetEnabled(hipGraphExec_t exec,
+                                                        hipGraphNode_t node,
+                                                        bool enabled) {
+  // Node is enabled if value != 0, otherwise the node is disabled.
+  unsigned value = enabled ? 1 : 0;
+  VLOG(2) << "Set HIP executable graph " << exec << " node " << node
+          << " enabled flag to " << value;
+  RETURN_IF_ROCM_ERROR(wrap::hipGraphNodeSetEnabled(exec, node, value),
+                       "Failed to set HIP graph node enabled flag");
   return ::tsl::OkStatus();
 }
 
@@ -633,24 +651,24 @@ GpuDriver::GraphNodeGetType(hipGraphNode_t node) {
                      "Invalid HIP graph node type");
 }
 
-/* static */ tsl::Status GpuDriver::GraphDebugDotPrint(hipGraph_t graph,
-                                                       const char* path) {
+/* static */ tsl::StatusOr<std::string> GpuDriver::GraphDebugDotPrint(
+    hipGraph_t graph, const char* path, bool return_printed_graph) {
   VLOG(2) << "Print HIP graph " << graph << " debug dot file to " << path;
 
   int flags = hipGraphDebugDotFlagsVerbose;
   RETURN_IF_ROCM_ERROR(wrap::hipGraphDebugDotPrint(graph, path, flags),
                        "Failed to print gpu graph debug file");
 
-  if (VLOG_IS_ON(100)) {
+  if (return_printed_graph) {
     std::string data;
     if (tsl::ReadFileToString(tsl::Env::Default(), path, &data).ok()) {
-      VLOG(200) << "HIP graph " << graph << " debug file:\n" << data;
+      return data;
     } else {
       LOG(WARNING) << "failed to read gpu graph debug file " << path;
     }
   }
 
-  return ::tsl::OkStatus();
+  return std::string(path);
 }
 
 /* static */ tsl::Status GpuDriver::DeviceGraphMemTrim(GpuDeviceHandle device) {
@@ -794,7 +812,7 @@ GpuDriver::GraphAddNode(hipGraphNode_t* node, hipGraph_t graph,
 
   RETURN_IF_ROCM_ERROR(
       wrap::hipGraphExecChildGraphNodeSetParams(exec, node, child),
-      "Failed to set ROCm graph child node params");
+      "Failed to set HIP graph child node params");
 
   return tsl::OkStatus();
 }
@@ -840,7 +858,7 @@ static hipMemAllocationType ToHipAllocationType(
     absl::Span<GpuGraphNodeHandle> deps, GpuDevicePtr gpu_dst) {
   RETURN_IF_ROCM_ERROR(wrap::hipGraphAddMemFreeNode(node, graph, deps.data(),
                                                     deps.size(), gpu_dst),
-                       "Failed to add memory free node to a ROCM graph");
+                       "Failed to add memory free node to a HIP graph");
   return ::tsl::OkStatus();
 }
 
@@ -1297,6 +1315,19 @@ struct BitPatternToValue {
                                                      void* location) {
   LOG(ERROR)
       << "Feature not supported on ROCm platform (UnifiedMemoryDeallocate)";
+}
+
+/* static */ tsl::StatusOr<void*> GpuDriver::CollectiveMemoryAllocate(
+    GpuContext* context, uint64_t bytes) {
+  ScopedActivateContext activated{context};
+  return absl::UnimplementedError(
+      "Feature not supported on ROCm platform (CollectiveMemoryAllocate)");
+}
+
+/* static */ tsl::Status GpuDriver::CollectiveMemoryDeallocate(
+    GpuContext* context, void* location) {
+  return absl::UnimplementedError(
+      "Feature not supported on ROCm platform (CollectiveMemoryDeallocate)");
 }
 
 /* static */ void* GpuDriver::HostAllocate(GpuContext* context,
@@ -1888,14 +1919,11 @@ static tsl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
   return tsl::OkStatus();
 }
 
-/* static */ bool GpuDriver::GetDriverVersion(int* driver_version) {
-  hipError_t res = wrap::hipDriverGetVersion(driver_version);
-  if (res != hipSuccess) {
-    LOG(ERROR) << "failed to query driver version: " << ToString(res);
-    return false;
-  }
-
-  return true;
+/* static */ tsl::StatusOr<int32_t> GpuDriver::GetDriverVersion() {
+  int32_t version;
+  RETURN_IF_ROCM_ERROR(wrap::hipDriverGetVersion(&version),
+                       "Could not get driver version");
+  return version;
 }
 
 /* static */ bool GpuDriver::GetDeviceProperties(

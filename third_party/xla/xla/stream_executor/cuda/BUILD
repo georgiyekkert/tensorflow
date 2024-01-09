@@ -1,4 +1,3 @@
-load("//xla/tests:build_defs.bzl", "xla_test")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library", "if_cuda")
 load(
@@ -10,10 +9,9 @@ load(
     "stream_executor_friends",
     "tf_additional_cuda_platform_deps",
     "tf_additional_cudnn_plugin_copts",
-    "tf_additional_cudnn_plugin_deps",
     "tf_additional_gpu_compilation_copts",
 )
-load("@local_tsl//tsl:tsl.bzl", "if_google", "set_external_visibility", "tsl_copts")
+load("@local_tsl//tsl:tsl.bzl", "if_google", "if_nccl", "set_external_visibility", "tsl_copts")
 load(
     "@local_tsl//tsl/platform:build_config_root.bzl",
     "if_static",
@@ -132,6 +130,7 @@ cc_library(
     name = "cuda_driver",
     srcs = if_cuda_is_configured(["cuda_driver.cc"]),
     hdrs = if_cuda_is_configured(["cuda_driver.h"]),
+    defines = if_cuda(["XLA_ENABLE_CUDA"]) + if_nccl(["XLA_ENABLE_XCCL"]),
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         ":cuda_diagnostics",
@@ -165,7 +164,7 @@ cc_library(
         "@local_tsl//tsl/platform:stacktrace",
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
-    ]),
+    ]) + if_nccl(["@local_config_nccl//:nccl"]),
 )
 
 cc_library(
@@ -241,10 +240,7 @@ cc_library(
     name = "cuda_activation_header",
     hdrs = ["cuda_activation.h"],
     visibility = ["//visibility:public"],
-    deps = [
-        "//xla/stream_executor/gpu:gpu_activation_header",
-        "//xla/stream_executor/platform",
-    ],
+    deps = ["//xla/stream_executor/gpu:gpu_activation_header"],
 )
 
 cc_library(
@@ -387,7 +383,12 @@ cc_library(
         ":cuda_activation_header",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:plugin_registry",
-    ]),
+    ]) + [
+        "//xla/stream_executor",  # build_cleaner: keep
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/types:span",
+        "@local_tsl//tsl/platform:status",
+    ],
 )
 
 cc_library(
@@ -431,7 +432,7 @@ cc_library(
         "@local_tsl//tsl/platform:tensor_float_32_hdr_lib",
         "@local_tsl//tsl/platform:tensor_float_32_utils",
         "@local_tsl//tsl/util:env_var",
-    ]) + tf_additional_cudnn_plugin_deps(),
+    ]),
     alwayslink = True,
 )
 
@@ -453,15 +454,6 @@ cc_library(
 )
 
 cuda_library(
-    name = "cuda_test_kernels",
-    testonly = 1,
-    srcs = if_cuda_is_configured(["cuda_test_kernels.cu.cc"]),
-    hdrs = if_cuda_is_configured(["cuda_test_kernels.h"]),
-    visibility = ["//visibility:public"],
-    deps = ["@local_config_cuda//cuda:cuda_headers"],
-)
-
-cuda_library(
     name = "cuda_conditional_kernels",
     srcs = if_cuda(
         ["cuda_conditional_kernels.cu.cc"],
@@ -475,43 +467,6 @@ cuda_library(
     deps = [
         "@com_google_absl//absl/log",
         "@local_config_cuda//cuda:cuda_headers",
-    ],
-)
-
-xla_test(
-    name = "cuda_kernel_test",
-    srcs = if_cuda_is_configured(["cuda_kernel_test.cc"]),
-    backends = ["gpu"],
-    deps = [
-        ":cuda_platform",
-        ":cuda_test_kernels",
-        "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
-        "//xla/stream_executor:platform",
-        "@com_google_googletest//:gtest",
-        "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
-    ],
-)
-
-xla_test(
-    name = "cuda_command_buffer_test",
-    srcs = if_cuda_is_configured(["cuda_command_buffer_test.cc"]),
-    backends = ["gpu"],
-    deps = [
-        ":cuda_platform",
-        ":cuda_runtime",
-        ":cuda_test_kernels",
-        "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
-        "//xla/stream_executor:platform",
-        "@com_google_absl//absl/log:check",
-        "@local_config_cuda//cuda:cuda_headers",
-        "@local_tsl//tsl/lib/core:status_test_util",
-        "@local_tsl//tsl/platform:status",
-        "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_benchmark",
-        "@local_tsl//tsl/platform:test_main",
     ],
 )
 
@@ -666,24 +621,4 @@ cc_library(
             "//conditions:default": [],
         }),
     ),
-)
-
-xla_cc_test(
-    name = "redzone_allocator_test",
-    srcs = ["redzone_allocator_test.cc"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
-    tags = tf_cuda_tests_tags() + [
-        "no_cuda_asan",  # TODO(b/171512140): re-enable.
-    ],
-    deps = [
-        ":cuda_activation",
-        ":cuda_executor",
-        "//xla/stream_executor",
-        "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor/gpu:gpu_asm_opts",
-        "//xla/stream_executor/gpu:redzone_allocator",
-        "@local_tsl//tsl/lib/core:status_test_util",
-        "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
-    ],
 )

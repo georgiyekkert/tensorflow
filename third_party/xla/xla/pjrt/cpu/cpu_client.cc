@@ -315,10 +315,10 @@ StatusOr<std::unique_ptr<PjRtClient>> GetTfrtCpuClient(
   }
 
   GlobalTopologyProto global_topology;
-  TF_RETURN_IF_ERROR(
-      ExchangeTopologies("cpu", options.node_id, options.num_nodes,
-                         absl::Minutes(2), absl::Minutes(5), options.kv_get,
-                         options.kv_put, local_topology, &global_topology));
+  TF_RETURN_IF_ERROR(ExchangeTopologies(
+      "cpu", options.node_id, options.num_nodes, absl::Minutes(2),
+      absl::Minutes(5), options.kv_store.get(), local_topology,
+      &global_topology));
 
   std::vector<std::unique_ptr<TfrtCpuDevice>> devices;
   for (const LocalTopologyProto& node : global_topology.nodes()) {
@@ -831,7 +831,8 @@ StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::BufferFromHostBuffer(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
-    std::function<void()> on_done_with_host_buffer, PjRtDevice* device) {
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+    PjRtDevice* device) {
   tsl::profiler::TraceMe traceme("TfrtCpuClient::BufferFromHostBuffer");
   Shape shape = ShapeUtil::MakeShape(type, dims);
   VLOG(2) << "TfrtCpuClient::BufferFromHostBuffer: shape: " << shape.ToString()

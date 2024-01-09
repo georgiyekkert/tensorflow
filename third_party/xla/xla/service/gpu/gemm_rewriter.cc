@@ -243,19 +243,21 @@ bool IsSupportedF8Pattern(
   auto use_spmd_partitioning = [](const HloInstruction *instr) -> bool {
     return instr->GetModule()->config().use_spmd_partitioning();
   };
+
   for (int i = 3; i < subgraph.size(); ++i) {
     // The remaining instructions must be commutative with dequantization.
     // Bitcast, broadcast, copy, dynamic-slice, pad, reshape, select, slice,
-    // all-gather, all-to-all and collective-permute instructions are supported.
-    // Specifically, the all-gather, all-to-all and collective-permute
-    // operations are permitted only in SPMD cases since the optimization cannot
-    // be guaranteed to be applied to all replicas in the MPMD scenario.
+    // transpose, all-gather, all-to-all and collective-permute instructions are
+    // supported. Specifically, the all-gather, all-to-all and
+    // collective-permute operations are permitted only in SPMD cases since the
+    // optimization cannot be guaranteed to be applied to all replicas in the
+    // MPMD scenario.
     if (!Match(
             subgraph[i].first,
             m::AnyOf<HloInstruction>(
                 m::Bitcast().WithPredicate(preserves_element_type),
                 m::Broadcast(), m::Copy(), m::DynamicSlice(), m::Pad(),
-                m::Reshape(), m::Select(), m::Slice(),
+                m::Reshape(), m::Select(), m::Slice(), m::Transpose(),
                 m::AllGather().WithPredicate(use_spmd_partitioning),
                 m::AllToAll().WithPredicate(use_spmd_partitioning),
                 m::CollectivePermute().WithPredicate(use_spmd_partitioning)))) {
@@ -593,10 +595,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (Match(instr, m::MultiplyAnyOrder(
                          m::AnyOf<HloInstruction>(
                              m::Slice(&slice_or_bitcast,
-                                      CublasLtMatmul(&existing_gemm)),
+                                      CublasLtMatmulMaybeF8(&existing_gemm)),
                              m::Bitcast(&slice_or_bitcast,
-                                        CublasLtMatmul(&existing_gemm)),
-                             CublasLtMatmul(&existing_gemm)),
+                                        CublasLtMatmulMaybeF8(&existing_gemm)),
+                             CublasLtMatmulMaybeF8(&existing_gemm)),
                          m::Op(&cdf).WithOneUser())) &&
         Match(cdf,
               m::MultiplyAnyOrder(
@@ -1931,7 +1933,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   // Turns an F8 dot into an F16 dot, converting operands to F16 and
   // converting the output back to F8.
   StatusOr<HloInstruction *> TurnF8DotIntoF16Dot(HloInstruction *instr) {
-    DCHECK(IsF8Type(instr));
     DCHECK(IsF8Type(instr->operand(0)));
     DCHECK(IsF8Type(instr->operand(1)));
 
@@ -1945,15 +1946,19 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       TF_RETURN_IF_ERROR(instr->ReplaceOperandWith(i, convert));
     }
 
-    // Clone instruction and convert output to F8
-    Shape output_f16_shape = instr->shape();
-    output_f16_shape.set_element_type(F16);
-    HloInstruction *f16_dot =
-        instr->AddInstruction(instr->CloneWithNewShape(output_f16_shape));
-    HloInstruction *convert_to_f8 = instr->AddInstruction(
-        HloInstruction::CreateConvert(instr->shape(), f16_dot));
-    TF_RETURN_IF_ERROR(ReplaceInstruction(instr, convert_to_f8));
-    return f16_dot;
+    // If output is F8, change output to F16 and then convert it back to F8
+    if (IsF8Type(instr)) {
+      Shape output_f16_shape = instr->shape();
+      output_f16_shape.set_element_type(F16);
+      HloInstruction *f16_dot =
+          instr->AddInstruction(instr->CloneWithNewShape(output_f16_shape));
+      HloInstruction *convert_to_f8 = instr->AddInstruction(
+          HloInstruction::CreateConvert(instr->shape(), f16_dot));
+      TF_RETURN_IF_ERROR(ReplaceInstruction(instr, convert_to_f8));
+      return f16_dot;
+    } else {
+      return instr;
+    }
   }
 };
 
@@ -1994,18 +1999,6 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
       operands_byte_size += ShapeUtil::ByteSizeOf(operand->shape());
     }
     workspace = std::min(workspace, operands_byte_size);
-
-    // If CUDA graphs are disabled (command buffer implementation detail),
-    // then we reset the workspace size to 0 and rely on cuBlas to allocate
-    // workspace from its own pool.
-    //
-    // TODO(ezhulenev): Remove this work around, allocating workspace
-    // explicitly should always be better than relying on cuBlas.
-    bool cuda_graphs_disabled = instr->GetModule()
-                                    ->config()
-                                    .debug_options()
-                                    .xla_gpu_enable_command_buffer_size() == 0;
-    if (cuda_graphs_disabled) workspace = 0;
 
     // Append workspace buffer to instruction outputs.
     std::vector<Shape> output_shapes = {instr->shape()};

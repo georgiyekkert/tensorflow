@@ -363,28 +363,41 @@ enum class PreloadCudnnType { ConvFwd, ConvBwdFilter, ConvBwdData, Rnn };
 // Preload sub libs for cudnn 8.0.4+ to make sure that the loading time isn't
 // measured in the autotuning.
 void PreloadCudnnSubLibs(PreloadCudnnType type) {
-#if CUDNN_VERSION >= 8004
   switch (type) {
     case PreloadCudnnType::ConvBwdFilter:
     case PreloadCudnnType::ConvBwdData: {
+#if CUDNN_VERSION >= 8004 && CUDNN_VERSION < 9000
       cudnnOpsTrainVersionCheck();
       cudnnCnnTrainVersionCheck();
+#endif  // CUDNN_VERSION >= 8004 && CUDNN_VERSION < 9000
       [[clang::fallthrough]];
     }
     case PreloadCudnnType::ConvFwd: {
+#if CUDNN >= 9000 && TF_ENABLE_CUDNN_FRONTEND
+      cudnnGraphVersionCheck();
+      cudnnOpsVersionCheck();
+#elif CUDNN_VERSION >= 9000
+      cudnnCnnVersionCheck();
+      cudnnOpsVersionCheck();
+#elif CUDNN_VERSION >= 8004
       cudnnOpsInferVersionCheck();
       cudnnCnnInferVersionCheck();
+#endif  // CUDNN >= 9000 && TF_ENABLE_CUDNN_FRONTEND
       break;
     }
     case PreloadCudnnType::Rnn: {
+#if CUDNN_VERSION >= 9000
+      cudnnOpsVersionCheck();
+      cudnnAdvVersionCheck();
+#elif CUDNN_VERSION >= 8004
       cudnnOpsInferVersionCheck();
       cudnnAdvInferVersionCheck();
       cudnnOpsTrainVersionCheck();
       cudnnAdvTrainVersionCheck();
+#endif  // CUDNN_VERSION >= 9000
       break;
     }
   }
-#endif  // CUDNN_VERSION >= 8004
 }
 
 void PreloadCudnnSubLibsHelper(dnn::ConvolutionKind kind) {
@@ -541,7 +554,9 @@ struct RnnDescriptorDeleter {
 };
 struct PersistentRnnPlanDeleter {
   void operator()(cudnnPersistentRNNPlan_t plan) const {
+#if CUDNN_VERSION < 8100
     CHECK_CUDNN_OK(cudnnDestroyPersistentRNNPlan(plan));
+#endif  // CUDNN_VERSION < 8100
   }
 };
 #if CUDNN_VERSION >= 7603
@@ -569,8 +584,13 @@ using ActivationDescriptor =
 using DropoutDescriptor =
     std::unique_ptr<cudnnDropoutStruct, DropoutDescriptorDeleter>;
 using RnnDescriptor = std::unique_ptr<cudnnRNNStruct, RnnDescriptorDeleter>;
+#if CUDNN_VERSION >= 8100
+struct DummyType {};
+using PersistentRnnPlan = std::unique_ptr<DummyType>;
+#else
 using PersistentRnnPlan =
     std::unique_ptr<cudnnPersistentRNNPlan, PersistentRnnPlanDeleter>;
+#endif  // CUDNN_VERSION >= 8100
 #if CUDNN_VERSION >= 7603
 using CtcLossDescriptor =
     std::unique_ptr<cudnnCTCLossStruct, CtcLossDescriptorDeleter>;
@@ -630,6 +650,7 @@ CtcLossDescriptor CreateCtcLossDescriptor() {
 }
 #endif
 
+#if CUDNN_VERSION < 8100
 tsl::StatusOr<PersistentRnnPlan> CreatePersistentRnnPlan(
     cudnnRNNDescriptor_t rnn_desc, int batch_size, cudnnDataType_t data_type) {
   cudnnPersistentRNNPlan_t result;
@@ -637,6 +658,7 @@ tsl::StatusOr<PersistentRnnPlan> CreatePersistentRnnPlan(
       cudnnCreatePersistentRNNPlan(rnn_desc, batch_size, data_type, &result));
   return tsl::StatusOr<PersistentRnnPlan>(PersistentRnnPlan(result));
 }
+#endif  // CUDNN_VERSION < 8100
 
 // Turns a BatchDescriptor structure into a cudnn tensor handle within a
 // scope.
@@ -1432,6 +1454,10 @@ class CudnnRnnDescriptor : public dnn::RnnDescriptor {
     PersistentRnnPlan rnn_plan;
     if (rnn_algo == CUDNN_RNN_ALGO_PERSIST_DYNAMIC) {
       CHECK_GE(batch_size, 0);
+#if CUDNN_VERSION >= 8100
+      RETURN_IF_CUDNN_ERROR(
+          cudnnBuildRNNDynamic(cudnn.handle(), rnn_desc.get(), batch_size));
+#else
       rnn_plan_wrapper =
           CreatePersistentRnnPlan(rnn_desc.get(), batch_size, data_type);
       if (!rnn_plan_wrapper.ok()) {
@@ -1441,6 +1467,7 @@ class CudnnRnnDescriptor : public dnn::RnnDescriptor {
         RETURN_IF_CUDNN_ERROR(
             cudnnSetPersistentRNNPlan(rnn_desc.get(), rnn_plan.get()));
       }
+#endif  // CUDNN_VERSION >= 8100
     }
 
     // Create the params handle.
@@ -1547,7 +1574,7 @@ namespace {
 tsl::Status CheckAndFetchProjectionWeights(
     const CudnnHandle& cudnn, cudnnRNNDescriptor_t rnn_desc, const int layer,
     const TensorDescriptor& input_desc, const FilterDescriptor& filter_desc,
-    const FilterDescriptor& region_desc_handle,
+    int64_t params_size_in_bytes, const FilterDescriptor& region_desc_handle,
     dnn::RnnDescriptor::ParamsRegions* weights) {
   int hidden_size_v;
   int num_layers_v;
@@ -1557,17 +1584,24 @@ tsl::Status CheckAndFetchProjectionWeights(
   cudnnRNNMode_t mode;
   cudnnRNNAlgo_t algo;
   cudnnDataType_t data_type;
-#if CUDNN_VERSION >= 8000
-  RETURN_IF_CUDNN_ERROR(cudnnGetRNNDescriptor_v6(
-      /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc,
+  int rec_proj_size_v;
+#if CUDNN_VERSION >= 8100
+  RETURN_IF_CUDNN_ERROR(cudnnGetRNNDescriptor_v8(
+      /*rnnDesc=*/rnn_desc,
+      /*algo=*/&algo,
+      /*cellMode=*/&mode,
+      /*biasMode=*/nullptr,
+      /*dirMode=*/&direction,
+      /*inputMode=*/&input_mode,
+      /*dataType=*/nullptr,
+      /*mathPrec=*/&data_type,
+      /*mathType=*/nullptr,
+      /*inputSize=*/nullptr,
       /*hiddenSize=*/&hidden_size_v,
+      /*projSize=*/&rec_proj_size_v,
       /*numLayers=*/&num_layers_v,
       /*dropoutDesc=*/&dropout_desc,
-      /*inputMode=*/&input_mode,
-      /*direction=*/&direction,
-      /*mode=*/&mode,
-      /*algo=*/&algo,
-      /*mathPrec=*/&data_type));
+      /*auxFlags=*/nullptr));
 #else
   RETURN_IF_CUDNN_ERROR(cudnnGetRNNDescriptor(
       /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc,
@@ -1579,17 +1613,48 @@ tsl::Status CheckAndFetchProjectionWeights(
       /*mode=*/&mode,
       /*algo=*/&algo,
       /*mathPrec=*/&data_type));
-#endif
-  int rec_proj_size_v;
   int out_proj_size_v;
   RETURN_IF_CUDNN_ERROR(cudnnGetRNNProjectionLayers(
       /*handle=*/cudnn.handle(),
       /*rnnDesc=*/rnn_desc,
       /*recProjSize*/ &rec_proj_size_v,
       /*outProjSize*/ &out_proj_size_v));
+#endif  // CUDNN_VERSION >= 8100
   if (rec_proj_size_v != hidden_size_v) {
-    void* offset = nullptr;
     int region_id = 8;
+#if CUDNN_VERSION >= 8100
+    void* b_ptr = nullptr;
+    void* m_ptr = nullptr;
+    void* w_ptr = nullptr;
+    TensorDescriptor m_region_desc_handle = CreateTensorDescriptor();
+    TensorDescriptor b_region_desc_handle = CreateTensorDescriptor();
+    RETURN_IF_CUDNN_ERROR(cudnnGetRNNWeightParams(
+        /*handle=*/cudnn.handle(),
+        /*rnnDesc=*/rnn_desc,
+        /*pseudoLayer=*/layer,
+        /*weightSpaceSize=*/params_size_in_bytes,
+        /*weightSpace=*/w_ptr,
+        /*linLayerID=*/region_id,
+        /*mDesc=*/m_region_desc_handle.get(),
+        /*mAddr=*/&m_ptr,
+        /*bDesc=*/b_region_desc_handle.get(),
+        /*bAddr=*/&b_ptr));
+    int dims[] = {1, 1, 1};
+    int strides[] = {1, 1, 1};
+    cudnnDataType_t data_type;
+    int n_dims;
+    RETURN_IF_CUDNN_ERROR(cudnnGetTensorNdDescriptor(
+        /*tensorDesc=*/m_region_desc_handle.get(),
+        /*nbDimsRequested=*/sizeof(dims) / sizeof(dims[0]),
+        /*dataType=*/&data_type,
+        /*nbDims=*/&n_dims,
+        /*dimA=*/dims,
+        /*strideA*/ strides));
+    int64_t size =
+        dims[0] * dims[1] * dims[2] * CudnnDataTypeToByteSize(data_type);
+    int64_t offset = static_cast<char*>(m_ptr) - static_cast<char*>(w_ptr);
+#else
+    void* offset = nullptr;
     RETURN_IF_CUDNN_ERROR(cudnnGetRNNLinLayerMatrixParams(
         /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc,
         /*layer=*/layer, /*xDesc=*/input_desc.get(),
@@ -1608,6 +1673,7 @@ tsl::Status CheckAndFetchProjectionWeights(
         /*nbDims=*/&n_dims, /*filterDimA=*/dims));
     int64_t size =
         dims[0] * dims[1] * dims[2] * CudnnDataTypeToByteSize(data_type);
+#endif  // CUDNN_VERSION >= 8100
     dnn::RnnDescriptor::ParamsRegion region = {
         reinterpret_cast<int64_t>(offset), size};
     weights->push_back(region);
@@ -1630,10 +1696,16 @@ tsl::StatusOr<CudnnRnnParamsDescriptor> CudnnRnnParamsDescriptor::Create(
       /*strideA=*/strides));
 
   size_t params_size = 0;
+#if CUDNN_VERSION >= 8100
+  RETURN_IF_CUDNN_ERROR(cudnnGetRNNWeightSpaceSize(
+      /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc,
+      /*weightSpaceSize=*/&params_size));
+#else
   RETURN_IF_CUDNN_ERROR(cudnnGetRNNParamsSize(
       /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc,
       /*xDesc=*/input_desc.get(), /*sizeInBytes=*/&params_size,
       /*dataType=*/data_type));
+#endif  // CUDNN_VERSION >= 8100
   int64_t params_size_in_bytes = static_cast<int64_t>(params_size);
 
   FilterDescriptor filter_desc = CreateFilterDescriptor();
@@ -1671,6 +1743,51 @@ tsl::StatusOr<CudnnRnnParamsDescriptor> CudnnRnnParamsDescriptor::Create(
 
   for (int layer = 0; layer < layer_count; layer++) {
     for (int region = 0; region < region_count_per_layer; region++) {
+#if CUDNN_VERSION >= 8100
+      void* m_ptr = nullptr;
+      void* b_ptr = nullptr;
+      void* w_ptr = nullptr;
+      TensorDescriptor m_region_desc_handle = CreateTensorDescriptor();
+      TensorDescriptor b_region_desc_handle = CreateTensorDescriptor();
+      RETURN_IF_CUDNN_ERROR(cudnnGetRNNWeightParams(
+          /*handle=*/cudnn.handle(),
+          /*rnnDesc=*/rnn_desc,
+          /*pseudoLayer=*/layer,
+          /*weightsSize=*/params_size_in_bytes,
+          /*weights=*/&w_ptr,
+          /*linID=*/region,
+          /*mDesc=*/m_region_desc_handle.get(),
+          /*mAddr=*/&m_ptr,
+          /*bDesc=*/b_region_desc_handle.get(),
+          /*bAddr=*/&b_ptr));
+
+      int dims[] = {1, 1, 1};
+      int strides[] = {1, 1, 1};
+      cudnnDataType_t data_type;
+      int n_dims;
+      auto get_size =
+          [&](const TensorDescriptor& tensor_desc) -> tsl::StatusOr<int64_t> {
+        RETURN_IF_CUDNN_ERROR(cudnnGetTensorNdDescriptor(
+            /*tensorDesc=*/m_region_desc_handle.get(),
+            /*nbDimsRequested=*/sizeof(dims) / sizeof(dims[0]),
+            /*dataType=*/&data_type,
+            /*nbDims=*/&n_dims,
+            /*dimA=*/dims,
+            /*strideA*/ strides));
+        int64_t size =
+            dims[0] * dims[1] * dims[2] * CudnnDataTypeToByteSize(data_type);
+        return size;
+      };
+      TF_ASSIGN_OR_RETURN(int64_t m_size, get_size(m_region_desc_handle));
+      int64_t m_offset = static_cast<char*>(m_ptr) - static_cast<char*>(w_ptr);
+      dnn::RnnDescriptor::ParamsRegion m_region = {m_offset, m_size};
+      weights.push_back(m_region);
+
+      TF_ASSIGN_OR_RETURN(int64_t b_size, get_size(b_region_desc_handle));
+      int64_t b_offset = static_cast<char*>(b_ptr) - static_cast<char*>(w_ptr);
+      dnn::RnnDescriptor::ParamsRegion b_region = {b_offset, b_size};
+      biases.push_back(b_region);
+#else
       for (int type = 0; type < 2; type++) {
         void* offset = nullptr;
         RETURN_IF_CUDNN_ERROR(
@@ -1703,10 +1820,11 @@ tsl::StatusOr<CudnnRnnParamsDescriptor> CudnnRnnParamsDescriptor::Create(
             reinterpret_cast<int64_t>(offset), size};
         (type == 0 ? weights : biases).push_back(region);
       }
+#endif  // CUDNN_VERSION >= 8100
     }
     TF_RETURN_IF_ERROR(CheckAndFetchProjectionWeights(
-        cudnn, rnn_desc, layer, input_desc, filter_desc, region_desc_handle,
-        &weights));
+        cudnn, rnn_desc, layer, input_desc, filter_desc, params_size_in_bytes,
+        region_desc_handle, &weights));
   }
 
   return CudnnRnnParamsDescriptor(std::move(filter_desc), params_size_in_bytes,
@@ -1940,22 +2058,62 @@ tsl::Status CheckRNNParameterSize(
   return ::tsl::OkStatus();
 }
 
-tsl::StatusOr<DeviceMemory<uint8_t>> CreateRnnWorkspace(
+tsl::Status CreateRnnTempSpace(
     Stream* stream, const CudnnHandle& cudnn,
-    const CudnnRnnDescriptor& rnn_desc,
+    const CudnnRnnDescriptor& rnn_desc, RnnModelDims model_dims,
     const CudnnRnnSequenceTensorDescriptor& input_desc,
-    ScratchAllocator* workspace_allocator) {
-  // Query the workspace size.
+    ScratchAllocator* workspace_allocator,
+    ScratchAllocator* reserve_space_allocator, bool is_fwd_training,
+    DeviceMemory<uint8_t>* workspace, DeviceMemory<uint8_t>* reserve_space) {
+  size_t reserve_space_size_in_bytes = 0;
   size_t workspace_size_in_bytes = 0;
-  RETURN_IF_CUDNN_ERROR(cudnnGetRNNWorkspaceSize(
-      /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
-      /*seqLength=*/input_desc.max_seq_length(), /*xDesc=*/input_desc.handles(),
-      /*sizeInBytes=*/&workspace_size_in_bytes));
-  // Allocate the workspace.
-  if (workspace_size_in_bytes == 0) {
-    return DeviceMemory<uint8_t>();
+  if (input_desc.is_var_seq_lengths()) {
+#if CUDNN_VERSION >= 8100
+    auto rnn_fwd_mode =
+        is_fwd_training ? CUDNN_FWD_MODE_TRAINING : CUDNN_FWD_MODE_INFERENCE;
+    RETURN_IF_CUDNN_ERROR(cudnnGetRNNTempSpaceSizes(
+        /*handle=*/cudnn.handle(),
+        /*rnnDesc=*/rnn_desc.handle(),
+        /*fMode=*/rnn_fwd_mode,
+        /*xDesc=*/input_desc.data_handle(),
+        /*workSpaceSize=*/&workspace_size_in_bytes,
+        /*reserveSpaceSize=*/&reserve_space_size_in_bytes));
+#else
+    return tsl::errors::Internal(
+        "Sequence lengths for RNN are supported from CUDNN 8.1+");
+#endif  // CUDNN_VERSION >= 8100
+  } else {
+#if CUDNN_VERSION >= 9000
+    return tsl::errors::Internal(
+        "Sequence lengths for RNN are required from CUDNN 9.0+");
+#else
+    RETURN_IF_CUDNN_ERROR(cudnnGetRNNWorkspaceSize(
+        /*handle=*/cudnn.handle(),
+        /*rnnDesc=*/rnn_desc.handle(),
+        /*seqLength=*/input_desc.max_seq_length(),
+        /*xDesc=*/input_desc.handles(),
+        /*sizeInBytes=*/&workspace_size_in_bytes));
+    if (is_fwd_training) {
+      RETURN_IF_CUDNN_ERROR(cudnnGetRNNTrainingReserveSize(
+          /*handle=*/cudnn.handle(),
+          /*rnnDesc=*/rnn_desc.handle(),
+          /*seqLength=*/model_dims.max_seq_length,
+          /*xDesc=*/input_desc.handles(),
+          /*sizeInBytes=*/&reserve_space_size_in_bytes));
+    }
+#endif  // CUDNN_VERSION >= 9000
   }
-  return workspace_allocator->AllocateBytes(workspace_size_in_bytes);
+
+  if (workspace_size_in_bytes > 0) {
+    TF_ASSIGN_OR_RETURN(*workspace, workspace_allocator->AllocateBytes(
+                                        workspace_size_in_bytes));
+  }
+  if (reserve_space_allocator != nullptr && is_fwd_training &&
+      reserve_space_size_in_bytes > 0) {
+    TF_ASSIGN_OR_RETURN(*reserve_space, reserve_space_allocator->AllocateBytes(
+                                            reserve_space_size_in_bytes));
+  }
+  return ::tsl::OkStatus();
 }
 
 #if CUDNN_VERSION >= 7402
@@ -2060,42 +2218,24 @@ tsl::Status CudnnSupport::DoRnnForwardImpl(
 
   TF_RETURN_IF_ERROR(CheckRNNParameterSize(cudnn, rnn_desc, input_desc));
 
-  // In CUDNN v8.0, the cudnnRNNForward*** and cudnnRNNForward***Ex have been
-  // deprecated. Instead, we use the cudnnRNNForward which requires the
-  // sequence_lengths parameter. For more info,
-  // https://docs.nvidia.com/deeplearning/cudnn/api/index.html#release-802.
-#if CUDNN_VERSION >= 8100 && TF_ENABLE_CUDNN_FRONTEND
+  DeviceMemory<uint8_t> reserve_space;
+  DeviceMemory<uint8_t> workspace;
+  TF_RETURN_IF_ERROR(CreateRnnTempSpace(
+      stream, cudnn, rnn_desc, model_dims, input_desc, workspace_allocator,
+      reserve_space_allocator, is_training, &workspace, &reserve_space));
+
+  const bool is_profiling = output_profile_result != nullptr;
+  TF_ASSIGN_OR_RETURN(
+      std::optional<GpuTimer> timer,
+      GpuTimer::CreateIfNeeded(AsGpuStream(stream), is_profiling));
+
   if (input_desc.is_var_seq_lengths()) {
-    DeviceMemory<uint8_t> workspace;
-    DeviceMemory<uint8_t> reserve_space;
-    cudnnForwardMode_t rnn_fwd_mode;
-    if (is_training) {
-      rnn_fwd_mode = CUDNN_FWD_MODE_TRAINING;
-    } else {
-      rnn_fwd_mode = CUDNN_FWD_MODE_INFERENCE;
-    }
-    size_t reserve_space_size_in_bytes = 0;
-    size_t workspace_size_in_bytes = 0;
-    RETURN_IF_CUDNN_ERROR(cudnnGetRNNTempSpaceSizes(
-        /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
-        /*fMode=*/rnn_fwd_mode, /*xDesc=*/input_desc.data_handle(),
-        /*workSpaceSize=*/&workspace_size_in_bytes,
-        /*reserveSpaceSize=*/&reserve_space_size_in_bytes));
-
-    if (workspace_size_in_bytes > 0) {
-      TF_ASSIGN_OR_RETURN(workspace, workspace_allocator->AllocateBytes(
-                                         workspace_size_in_bytes));
-    }
-    if (reserve_space_size_in_bytes > 0) {
-      TF_ASSIGN_OR_RETURN(reserve_space, reserve_space_allocator->AllocateBytes(
-                                             reserve_space_size_in_bytes));
-    }
-
-    const bool is_profiling = output_profile_result != nullptr;
-    TF_ASSIGN_OR_RETURN(
-        std::optional<GpuTimer> timer,
-        GpuTimer::CreateIfNeeded(AsGpuStream(stream), is_profiling));
-
+    // In CUDNN v8, the cudnnRNNForward*** and cudnnRNNForward***Ex have been
+    // deprecated. Instead, we use the cudnnRNNForward which requires the
+    // sequence_lengths parameter.
+#if CUDNN_VERSION >= 8100
+    auto rnn_fwd_mode =
+        is_training ? CUDNN_FWD_MODE_TRAINING : CUDNN_FWD_MODE_INFERENCE;
     RETURN_IF_CUDNN_ERROR(cudnnRNNForward(
         /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
         /*fwdMode=*/rnn_fwd_mode,
@@ -2112,42 +2252,8 @@ tsl::Status CudnnSupport::DoRnnForwardImpl(
         /*workSpaceSize=*/workspace.size(), /*workspace=*/workspace.opaque(),
         /*reserveSpaceSizeInBytes=*/reserve_space.size(),
         /*reserveSpace=*/reserve_space.opaque()));
-
-    if (is_profiling) {
-      TF_RETURN_IF_ERROR(PopulateProfileFromTimer(
-          timer, *rnn_desc.algorithm_config().algorithm(),
-          output_profile_result));
-    }
-    return tsl::OkStatus();
-  }
-#endif
-  TF_ASSIGN_OR_RETURN(DeviceMemory<uint8_t> workspace,
-                      CreateRnnWorkspace(stream, cudnn, rnn_desc, input_desc,
-                                         workspace_allocator));
-
-  // query the reserve space size
-  // allocate the reserve space
-  DeviceMemory<uint8_t> reserve_space;
-  if (is_training) {
-    size_t reserve_space_size_in_bytes = 0;
-    RETURN_IF_CUDNN_ERROR(cudnnGetRNNTrainingReserveSize(
-        /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
-        /*seqLength=*/model_dims.max_seq_length, /*xDesc=*/input_desc.handles(),
-        /*sizeInBytes=*/&reserve_space_size_in_bytes));
-
-    if (reserve_space_size_in_bytes > 0) {
-      TF_ASSIGN_OR_RETURN(reserve_space, reserve_space_allocator->AllocateBytes(
-                                             reserve_space_size_in_bytes));
-    }
-  }
-
-  const bool is_profiling = output_profile_result != nullptr;
-  TF_ASSIGN_OR_RETURN(
-      std::optional<GpuTimer> timer,
-      GpuTimer::CreateIfNeeded(AsGpuStream(stream), is_profiling));
-
-  if (!is_training) {
-    if (input_desc.is_var_seq_lengths()) {
+#else
+    if (!is_training) {
       RETURN_IF_CUDNN_ERROR(cudnnRNNForwardInferenceEx(
           /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
           /*xDesc=*/input_desc.data_handle(), /*x=*/input_data.opaque(),
@@ -2163,21 +2269,6 @@ tsl::Status CudnnSupport::DoRnnForwardImpl(
           /*workspace=*/workspace.opaque(),
           /*workSpaceSizeInBytes=*/workspace.size()));
     } else {
-      RETURN_IF_CUDNN_ERROR(cudnnRNNForwardInference(
-          /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
-          /*seqLength=*/model_dims.max_seq_length,
-          /*xDesc=*/input_desc.handles(),
-          /*x=*/input_data.opaque(), /*hxDesc=*/input_h_desc.handle(),
-          /*hx=*/input_h_data.opaque(), /*cxDesc=*/input_c_desc.handle(),
-          /*cx=*/input_c_data.opaque(), /*wDesc=*/rnn_desc.params_handle(),
-          /*w=*/params.opaque(), /*yDesc=*/output_desc.handles(),
-          /*y=*/output_data->opaque(), /*hyDesc=*/output_h_desc.handle(),
-          /*hy=*/output_h_data->opaque(), /*cyDesc=*/output_c_desc.handle(),
-          /*cy=*/output_c_data->opaque(), /*workspace=*/workspace.opaque(),
-          /*workSpaceSizeInBytes=*/workspace.size()));
-    }
-  } else {
-    if (input_desc.is_var_seq_lengths()) {
       RETURN_IF_CUDNN_ERROR(cudnnRNNForwardTrainingEx(
           /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
           /*xDesc=*/input_desc.data_handle(), /*x=*/input_data.opaque(),
@@ -2194,6 +2285,26 @@ tsl::Status CudnnSupport::DoRnnForwardImpl(
           /*workSpaceSizeInBytes=*/workspace.size(),
           /*reserveSpace=*/reserve_space.opaque(),
           /*reserveSpaceSizeInBytes=*/reserve_space.size()));
+    }
+#endif  // CUDNN_VERSION >= 8100
+  } else {
+#if CUDNN_VERSION >= 9000
+    return tsl::errors::Internal(
+        "Sequence lengths for RNN are required from CUDNN 9.0+");
+#else
+    if (!is_training) {
+      RETURN_IF_CUDNN_ERROR(cudnnRNNForwardInference(
+          /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
+          /*seqLength=*/model_dims.max_seq_length,
+          /*xDesc=*/input_desc.handles(),
+          /*x=*/input_data.opaque(), /*hxDesc=*/input_h_desc.handle(),
+          /*hx=*/input_h_data.opaque(), /*cxDesc=*/input_c_desc.handle(),
+          /*cx=*/input_c_data.opaque(), /*wDesc=*/rnn_desc.params_handle(),
+          /*w=*/params.opaque(), /*yDesc=*/output_desc.handles(),
+          /*y=*/output_data->opaque(), /*hyDesc=*/output_h_desc.handle(),
+          /*hy=*/output_h_data->opaque(), /*cyDesc=*/output_c_desc.handle(),
+          /*cy=*/output_c_data->opaque(), /*workspace=*/workspace.opaque(),
+          /*workSpaceSizeInBytes=*/workspace.size()));
     } else {
       RETURN_IF_CUDNN_ERROR(cudnnRNNForwardTraining(
           /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
@@ -2210,6 +2321,7 @@ tsl::Status CudnnSupport::DoRnnForwardImpl(
           /*reserveSpace=*/reserve_space.opaque(),
           /*reserveSpaceSizeInBytes=*/reserve_space.size()));
     }
+#endif  // CUDNN_VERSION >= 9000
   }
 
   if (is_profiling) {
@@ -2258,29 +2370,21 @@ tsl::Status CudnnSupport::DoRnnBackwardImpl(
 
   TF_RETURN_IF_ERROR(CheckRNNParameterSize(cudnn, rnn_desc, input_desc));
 
-  // In CUDNN v8.0, the cudnnRNNForward*** and cudnnRNNForward***Ex have been
-  // deprecated. Instead, we use the cudnnRNNForward which requires the
-  // sequence_lengths parameter. For more info,
-  // https://docs.nvidia.com/deeplearning/cudnn/api/index.html#release-802.
-#if CUDNN_VERSION >= 8100 && TF_ENABLE_CUDNN_FRONTEND
+  DeviceMemory<uint8_t> workspace;
+  TF_RETURN_IF_ERROR(CreateRnnTempSpace(stream, cudnn, rnn_desc, model_dims,
+                                        input_desc, workspace_allocator,
+                                        nullptr, true, &workspace, nullptr));
+
+  const bool is_profiling = output_profile_result != nullptr;
+  TF_ASSIGN_OR_RETURN(
+      std::optional<GpuTimer> timer,
+      GpuTimer::CreateIfNeeded(AsGpuStream(stream), is_profiling));
+
   if (input_desc.is_var_seq_lengths()) {
-    DeviceMemory<uint8_t> workspace;
-    size_t workspace_size_in_bytes = 0;
-    RETURN_IF_CUDNN_ERROR(cudnnGetRNNTempSpaceSizes(
-        /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
-        /*fMode=*/CUDNN_FWD_MODE_TRAINING, /*xDesc=*/input_desc.data_handle(),
-        /*workSpaceSize=*/&workspace_size_in_bytes,
-        /*reserveSpaceSize=*/NULL));
-    if (workspace_size_in_bytes > 0) {
-      TF_ASSIGN_OR_RETURN(workspace, workspace_allocator->AllocateBytes(
-                                         workspace_size_in_bytes));
-    }
-
-    const bool is_profiling = output_profile_result != nullptr;
-    TF_ASSIGN_OR_RETURN(
-        std::optional<GpuTimer> timer,
-        GpuTimer::CreateIfNeeded(AsGpuStream(stream), is_profiling));
-
+    // In CUDNN v8, the cudnnRNNBackward*** and cudnnRNNBackward***Ex have
+    // been deprecated. Instead, we use the cudnnRNNBackward***_v8 which
+    // requires the sequence_lengths parameter.
+#if CUDNN_VERSION >= 8100
     RETURN_IF_CUDNN_ERROR(cudnnRNNBackwardData_v8(
         /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
         /*devSeqLengths=*/
@@ -2300,48 +2404,7 @@ tsl::Status CudnnSupport::DoRnnBackwardImpl(
         /*workSpaceSize=*/workspace.size(), /*workSpace=*/workspace.opaque(),
         /*reserveSpaceSize=*/reserve_space_data->size(),
         /*reserveSpace=*/reserve_space_data->opaque()));
-
-    if (params_backprop_data != nullptr) {
-      // Clear the dw to zeros.
-      stream->ThenMemZero(params_backprop_data, params_backprop_data->size());
-      RETURN_IF_CUDNN_ERROR(cudnnRNNBackwardWeights_v8(
-          /*handle=*/cudnn.handle(),
-          /*rnnDesc=*/rnn_desc.handle(),
-          /*addGrad=*/CUDNN_WGRAD_MODE_ADD,
-          /*devSeqLengths=*/
-          reinterpret_cast<const int*>(seq_lengths_data.opaque()),
-          /*xDesc=*/input_desc.data_handle(),
-          /*x=*/input_data.opaque(),
-          /*hDesc=*/input_h_desc.handle(),
-          /*hx=*/input_h_data.opaque(),
-          /*yDesc=*/output_desc.data_handle(),
-          /*y=*/output_data.opaque(),
-          /*weightSpaceSize=*/rnn_desc.ParamsSizeInBytes(),
-          /*dweightSpace=*/params_backprop_data->opaque(),
-          /*workSpaceSize=*/workspace.size(),
-          /*workSpace=*/workspace.opaque(),
-          /*reserveSpaceSize=*/reserve_space_data->size(),
-          /*reserveSpace=*/reserve_space_data->opaque()));
-    }
-
-    if (is_profiling) {
-      TF_RETURN_IF_ERROR(PopulateProfileFromTimer(
-          timer, *rnn_desc.algorithm_config().algorithm(),
-          output_profile_result));
-    }
-    return tsl::OkStatus();
-  }
-#endif
-  TF_ASSIGN_OR_RETURN(DeviceMemory<uint8_t> workspace,
-                      CreateRnnWorkspace(stream, cudnn, rnn_desc, input_desc,
-                                         workspace_allocator));
-
-  const bool is_profiling = output_profile_result != nullptr;
-  TF_ASSIGN_OR_RETURN(
-      std::optional<GpuTimer> timer,
-      GpuTimer::CreateIfNeeded(AsGpuStream(stream), is_profiling));
-
-  if (input_desc.is_var_seq_lengths()) {
+#else
     RETURN_IF_CUDNN_ERROR(cudnnRNNBackwardDataEx(
         /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
         /*yDesc=*/output_desc.data_handle(), /*y=*/output_data.opaque(),
@@ -2364,7 +2427,50 @@ tsl::Status CudnnSupport::DoRnnBackwardImpl(
         /*workSpaceSizeInBytes=*/workspace.size(),
         /*reserveSpace=*/reserve_space_data->opaque(),
         /*reserveSpaceSizeInBytes=*/reserve_space_data->size()));
+#endif  // CUDNN_VERSION >= 8100
+
+    if (params_backprop_data != nullptr) {
+      // Clear the dw to zeros.
+      stream->ThenMemZero(params_backprop_data, params_backprop_data->size());
+#if CUDNN_VERSION >= 8100
+      RETURN_IF_CUDNN_ERROR(cudnnRNNBackwardWeights_v8(
+          /*handle=*/cudnn.handle(),
+          /*rnnDesc=*/rnn_desc.handle(),
+          /*addGrad=*/CUDNN_WGRAD_MODE_ADD,
+          /*devSeqLengths=*/
+          reinterpret_cast<const int*>(seq_lengths_data.opaque()),
+          /*xDesc=*/input_desc.data_handle(),
+          /*x=*/input_data.opaque(),
+          /*hDesc=*/input_h_desc.handle(),
+          /*hx=*/input_h_data.opaque(),
+          /*yDesc=*/output_desc.data_handle(),
+          /*y=*/output_data.opaque(),
+          /*weightSpaceSize=*/rnn_desc.ParamsSizeInBytes(),
+          /*dweightSpace=*/params_backprop_data->opaque(),
+          /*workSpaceSize=*/workspace.size(),
+          /*workSpace=*/workspace.opaque(),
+          /*reserveSpaceSize=*/reserve_space_data->size(),
+          /*reserveSpace=*/reserve_space_data->opaque()));
+#else
+      RETURN_IF_CUDNN_ERROR(cudnnRNNBackwardWeightsEx(
+          /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
+          /*xDesc=*/input_desc.data_handle(), /*x=*/input_data.opaque(),
+          /*hxDesc=*/input_h_desc.handle(), /*hx=*/input_h_data.opaque(),
+          /*yDesc=*/output_desc.data_handle(),
+          /*y=*/output_data.opaque(),
+          /*workspace=*/workspace.opaque(),
+          /*workSpaceSizeInBytes=*/workspace.size(),
+          /*dwDesc=*/rnn_desc.params_handle(),
+          /*dw=*/params_backprop_data->opaque(),
+          /*reserveSpace=*/reserve_space_data->opaque(),
+          /*reserveSpaceSizeInBytes=*/reserve_space_data->size()));
+#endif  // CUDNN_VERSION >= 8100
+    }
   } else {
+#if CUDNN_VERSION >= 9000
+    return tsl::errors::Internal(
+        "Sequence lengths for RNN are required from CUDNN 9.0+");
+#else
     RETURN_IF_CUDNN_ERROR(cudnnRNNBackwardData(
         /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
         /*seqLength=*/model_dims.max_seq_length,
@@ -2387,25 +2493,10 @@ tsl::Status CudnnSupport::DoRnnBackwardImpl(
         /*workSpaceSizeInBytes=*/workspace.size(),
         /*reserveSpace=*/reserve_space_data->opaque(),
         /*reserveSpaceSizeInBytes=*/reserve_space_data->size()));
-  }
 
-  if (params_backprop_data != nullptr) {
-    // Clear the dw to zeros.
-    stream->ThenMemZero(params_backprop_data, params_backprop_data->size());
-    if (input_desc.is_var_seq_lengths()) {
-      RETURN_IF_CUDNN_ERROR(cudnnRNNBackwardWeightsEx(
-          /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
-          /*xDesc=*/input_desc.data_handle(), /*x=*/input_data.opaque(),
-          /*hxDesc=*/input_h_desc.handle(), /*hx=*/input_h_data.opaque(),
-          /*yDesc=*/output_desc.data_handle(),
-          /*y=*/output_data.opaque(),
-          /*workspace=*/workspace.opaque(),
-          /*workSpaceSizeInBytes=*/workspace.size(),
-          /*dwDesc=*/rnn_desc.params_handle(),
-          /*dw=*/params_backprop_data->opaque(),
-          /*reserveSpace=*/reserve_space_data->opaque(),
-          /*reserveSpaceSizeInBytes=*/reserve_space_data->size()));
-    } else {
+    if (params_backprop_data != nullptr) {
+      // Clear the dw to zeros.
+      stream->ThenMemZero(params_backprop_data, params_backprop_data->size());
       // make the backward weight call
       RETURN_IF_CUDNN_ERROR(cudnnRNNBackwardWeights(
           /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
@@ -2420,6 +2511,7 @@ tsl::Status CudnnSupport::DoRnnBackwardImpl(
           /*reserveSpace=*/reserve_space_data->opaque(),
           /*reserveSpaceSizeInBytes=*/reserve_space_data->size()));
     }
+#endif  // CUDNN_VERSION >= 9000
   }
 
   if (is_profiling) {
@@ -10124,213 +10216,6 @@ bool CudnnSupport::DoTransformTensor(Stream* stream,
   return IsStatusOk(status, /*report_error=*/true);
 }
 
-bool CudnnSupport::DoMatMul(Stream* stream,
-                            const DeviceMemory<float>& input_data,
-                            const DeviceMemory<float>& weights,
-                            const dnn::BatchDescriptor& input_dimensions,
-                            const dnn::BatchDescriptor& output_dimensions,
-                            DeviceMemory<float>* output_data) {
-  if (input_dimensions.count() != output_dimensions.count()) {
-    LOG(ERROR) << "MatMul input and output dimensions are not compatible.";
-    return false;
-  }
-
-  // We do not permute the input or output, instead we just
-  // reinterpret the layout. We are working with row-major matrices
-  // and the rows of the input and output correspond to batch, so
-  // batch has to be outermost in both the input and output.
-  //
-  // By adding transposes to the BLAS gemm call we could perhaps make
-  // the kYXDepthBatch layout work as well, but there has been no need
-  // for that so far.
-  if (input_dimensions.layout() != dnn::DataLayout::kBatchYXDepth &&
-      input_dimensions.layout() != dnn::DataLayout::kBatchDepthYX) {
-    LOG(ERROR) << "Unsupported MatMul input layout.";
-    return false;
-  }
-  if (output_dimensions.layout() != dnn::DataLayout::kBatchYXDepth &&
-      output_dimensions.layout() != dnn::DataLayout::kBatchDepthYX) {
-    LOG(ERROR) << "Unsupported MatMul output layout.";
-    return false;
-  }
-
-  if (output_dimensions.width() == 1 && output_dimensions.height() == 1) {
-    // This is a fast path that also supports the kBatchYXDepth layout.
-
-    // The matrices here are in row-major format while BLAS expects
-    // column-major, i.e. our matrices are transposed as far as BLAS
-    // is concerned. So we need to compute output^T =
-    // input^T*weights^T. There is no parameter for transposing the
-    // output in BLAS gemm, but instead we can transpose both sides of
-    // the equality to see that this is equivalent to
-    // output=weights*input. So we only need to swap the order of
-    // weights and input in the matrix product to correct for the
-    // row-major versus column-major difference.
-    const int64_t m = output_dimensions.NodesAcrossFeatureMaps();
-    const int64_t n = input_dimensions.count();
-    const int64_t k = input_dimensions.NodesAcrossFeatureMaps();
-    if (!stream
-             ->ThenBlasGemm(blas::Transpose::kNoTranspose,
-                            blas::Transpose::kNoTranspose, m, n, k, weights, m,
-                            input_data, k, output_data, m, NumericOptions{},
-                            blas::CallContext::kNone)
-
-             .ok()) {
-      return false;
-    }
-  } else {
-    // This is a slower and more complex path that supports output
-    // width() * height() > 1, though it only supports the
-    // kBatchYXDepth layout. Does support kBatchDepthYX if output
-    // feature_map_count() == 1, as then there is no difference
-    // between the two layouts.
-    //
-    // The operation here is the same as above, except that we have to
-    // do the matrix multiplication for each (y,x) output coordinate
-    // separately. We then interpret weights as containing K = width()
-    // * height() different matrices, which we all multiply onto the
-    // matrix from input_data, yielding K matrix products. We then
-    // combine these together into one matrix by concatenating all the
-    // first rows of these matrices, then all the seconds rows and so
-    // on. We can do this with a batched matrix multiplication, where
-    // the result is written to a different submatrix of the output
-    // for each matrix multiplication.
-    //
-    // The reason that we only support the kBatchYXDepth output layout
-    // is that we have to do something in the depth for each (y,x)
-    // coordinate. The kBatchYXDepth layout has the depth information
-    // for each point (y,x) in contiguous memory while the
-    // kBatchDepthYX layout does not.
-    //
-    // TODO(broune): Consider a special case for when output depth ==
-    // 1, as then possibly this could all be done as one matrix
-    // multiplication instead of a batched one, which should be
-    // faster. Another possibility would be to add a weights layout
-    // parameter and then support kBatchDepthYX for a different
-    // weights layout.
-    if (output_dimensions.layout() != dnn::DataLayout::kBatchYXDepth &&
-        !(output_dimensions.layout() == dnn::DataLayout::kBatchDepthYX &&
-          output_dimensions.feature_map_count() == 1)) {
-      LOG(ERROR) << "Unsupported MatMul output layout.";
-      return false;
-    }
-
-    const float alpha = 1.0f;  // Take the matrix product without scaling it.
-    const float beta = 0.0f;   // Ignore the original values in output_data.
-    const uint64_t m = output_dimensions.feature_map_count();
-    const uint64_t n = input_dimensions.count();
-    const uint64_t k = input_dimensions.NodesAcrossFeatureMaps();
-    const int lda = m;
-    const int ldb = k;
-    const int ldc = output_dimensions.NodesAcrossFeatureMaps();
-    const int batch_count = output_dimensions.NodesPerFeatureMap();
-
-    std::vector<DeviceMemory<float>> a(batch_count);
-    std::vector<DeviceMemory<float>> b(batch_count);
-    std::vector<DeviceMemory<float>> c(batch_count);
-    for (int i = 0; i < batch_count; ++i) {
-      const int weights_offset = i * input_dimensions.NodesAcrossFeatureMaps() *
-                                 output_dimensions.feature_map_count();
-      a[i] = DeviceMemory<float>::MakeFromByteSize(
-          const_cast<float*>(reinterpret_cast<const float*>(weights.opaque())) +
-              weights_offset,
-          weights.ElementCount() - weights_offset);
-
-      b[i] = input_data;
-
-      const int output_offset = i * output_dimensions.feature_map_count();
-      c[i] = DeviceMemory<float>::MakeFromByteSize(
-          const_cast<float*>(
-              reinterpret_cast<const float*>(output_data->opaque())) +
-              output_offset,
-          output_data->ElementCount() - output_offset);
-    }
-    const auto toPtrs = [](std::vector<DeviceMemory<float>>& v) {
-      std::vector<DeviceMemory<float>*> ptrs;
-      ptrs.reserve(v.size());
-      for (auto& mem : v) {
-        ptrs.push_back(&mem);
-      }
-      return ptrs;
-    };
-
-    stream->ThenBlasGemmBatched(
-        blas::Transpose::kNoTranspose, blas::Transpose::kNoTranspose, m, n, k,
-        alpha, toPtrs(a), lda, toPtrs(b), ldb, beta, toPtrs(c), ldc,
-        batch_count, NumericOptions{}, blas::CallContext::kNone);
-  }
-
-  return stream->ok();
-}
-
-bool CudnnSupport::DoBiasAdd(Stream* stream,
-                             const DeviceMemory<float>& input_data,
-                             const DeviceMemory<float>& biases,
-                             const dnn::BatchDescriptor& dimensions,
-                             DeviceMemory<float>* output_data) {
-  CudnnTensorDescriptor input_descriptor(dimensions, CUDNN_DATA_FLOAT);
-
-  dnn::BatchDescriptor bias_dimensions;
-  bias_dimensions.set_count(1)
-      .set_feature_map_count(dimensions.feature_map_count())
-      .set_height(1)
-      .set_width(1)
-      .set_layout(dnn::DataLayout::kBatchYXDepth);
-  CudnnTensorDescriptor bias_descriptor(bias_dimensions, CUDNN_DATA_FLOAT);
-
-  // cudnnAddTensor after R3 is in-place, so we need to copy input_data to
-  // output_data before doing the addition, unless the input and
-  // output are at the same address.
-  if (input_data.opaque() != output_data->opaque()) {
-    stream->ThenMemcpy(output_data, input_data,
-                       dimensions.ElementCount() * sizeof(float));
-    if (!stream->ok()) {
-      LOG(ERROR)
-          << "stream " << stream
-          << " could not enqueue a tensor copy as part of bias addition.";
-      return false;
-    }
-  }
-
-  const float alpha = 1.0f;
-  const float beta = 1.0f;
-
-  auto cudnn = cudnn_->GetHandle(parent_, stream);
-
-  const auto status = [&] {
-    RETURN_IF_CUDNN_ERROR(cudnnAddTensor(
-        cudnn.handle(), &alpha, bias_descriptor.handle(), biases.opaque(),
-        &beta, input_descriptor.handle(), output_data->opaque()));
-    return ::tsl::OkStatus();
-  }();
-  return IsStatusOk(status, /*report_error=*/true);
-}
-
-bool CudnnSupport::DoActivate(Stream* stream,
-                              dnn::ActivationMode activation_mode,
-                              const dnn::BatchDescriptor& dimensions,
-                              const DeviceMemory<float>& input_data,
-                              DeviceMemory<float>* output_data,
-                              uint64_t options) {
-  CudnnActivationDescriptor activation_desc(
-      activation_mode, CUDNN_PROPAGATE_NAN, dimensions.value_max());
-
-  CudnnTensorDescriptor input_nd(dimensions, CUDNN_DATA_FLOAT);
-  // Alpha is the input scaling factor.
-  float alpha = 1.0;
-  // Beta is the output scaling factor.
-  float beta = 0.0;
-
-  auto cudnn = cudnn_->GetHandle(parent_, stream);
-  const auto status = [&] {
-    RETURN_IF_CUDNN_ERROR(cudnnActivationForward(
-        cudnn.handle(), activation_desc.handle(), &alpha, input_nd.handle(),
-        input_data.opaque(), &beta, input_nd.handle(), output_data->opaque()));
-    return ::tsl::OkStatus();
-  }();
-  return IsStatusOk(status, /*report_error=*/true);
-}
-
 namespace {
 
 // Cudnn legacy API only supports int32 indexing and can handle a maximum of
@@ -10686,50 +10571,6 @@ bool CudnnSupport::DoDepthConcatenate(Stream* stream,
   }
   stream->ThenMemcpyH2D<float>(output_host, output_data);
   return true;
-}
-
-bool CudnnSupport::DoElementwiseOperate(Stream*, dnn::ElementwiseOperation,
-                                        BatchDescriptorSlice,
-                                        DeviceMemorySlice<float>,
-                                        const dnn::BatchDescriptor&,
-                                        DeviceMemory<float>*) {
-  LOG(FATAL) << "not yet implemented";  // TODO(leary)
-  return false;
-}
-
-bool CudnnSupport::DoXYPad(Stream* stream,
-                           const dnn::BatchDescriptor& dimensions,
-                           const DeviceMemory<float>& input_data,
-                           int64_t left_pad, int64_t right_pad, int64_t top_pad,
-                           int64_t bottom_pad,
-                           DeviceMemory<float>* output_data) {
-  LOG(FATAL) << "not yet implemented";  // TODO(leary)
-  return false;
-}
-
-bool CudnnSupport::DoXYSlice(Stream* stream,
-                             const dnn::BatchDescriptor& dimensions,
-                             const DeviceMemory<float>& input_data,
-                             int64_t left_trim, int64_t right_trim,
-                             int64_t top_trim, int64_t bottom_trim,
-                             DeviceMemory<float>* output_data) {
-  LOG(FATAL) << "not yet implemented";  // TODO(leary)
-  return false;
-}
-
-bool CudnnSupport::DoMemcpyD2HQuantized(
-    Stream* stream, const DeviceMemory<float>& gpu_unquantized_src,
-    dnn::QuantizedActivationMode mode, void* host_dst, int64_t size) {
-  LOG(ERROR) << "quantized memcpy not supported by cuDNN";
-  return false;
-}
-
-bool CudnnSupport::DoMemcpyH2DQuantized(
-    Stream* stream, const void* host_src, int64_t size,
-    dnn::QuantizedActivationMode mode,
-    DeviceMemory<float>* gpu_unquantized_dst) {
-  LOG(ERROR) << "quantized memcpy not supported by cuDNN";
-  return false;
 }
 
 bool CudnnSupport::DeriveOutputBatchDescriptor(

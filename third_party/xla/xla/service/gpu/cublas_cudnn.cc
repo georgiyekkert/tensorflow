@@ -18,6 +18,12 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {
@@ -39,6 +45,11 @@ bool IsCublasLtMatmul(const HloInstruction& hlo) {
 bool IsCublasLtMatmulF8(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kCustomCall &&
          hlo.custom_call_target() == kCublasLtMatmulF8CallTarget;
+}
+
+bool IsTriangularSolve(const HloInstruction& hlo) {
+  return hlo.opcode() == HloOpcode::kCustomCall &&
+         hlo.custom_call_target() == kTriangularSolveCallTarget;
 }
 
 const absl::string_view kGemmCallTarget = "__cublas$gemm";

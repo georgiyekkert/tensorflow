@@ -39,12 +39,10 @@ exports_files([
     "serialization_utils.h",
     "split_utils.cc",
     "split_utils.h",
-    "file_logger_client_no_op.h",
-    "file_logger_client_no_op.cc",
-    "file_logger_client_interface.h",
-    "file_logger_client_interface.cc",
     "stats_utils.cc",
     "stats_utils.h",
+    "tf_data_memory_logger.cc",
+    "tf_data_memory_logger.h",
     "tfdataz_metrics.h",
     "tfdataz_metrics.cc",
     "unbounded_thread_pool.cc",
@@ -216,6 +214,22 @@ tf_cc_test(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
+    ],
+)
+
+cc_library(
+    name = "tf_data_memory_logger",
+    srcs = ["tf_data_memory_logger.cc"],
+    hdrs = ["tf_data_memory_logger.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":tfdataz_metrics",
+        "//tensorflow/core/platform:env",
+        "//tensorflow/core/platform:numbers",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@local_tsl//tsl/platform:logging",
     ],
 )
 
@@ -638,8 +652,6 @@ cc_library(
     hdrs = ["utils.h"],
     # copybara:uncomment copts = ["-Wthread-safety-analysis"],
     deps = [
-        ":file_logger_client_interface",
-        ":file_logger_client_no_op",
         "//tensorflow/core:framework",
         "//tensorflow/core:protos_all_cc",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -652,24 +664,7 @@ tf_cc_test(
     srcs = ["utils_test.cc"],
     # copybara:uncomment extra_copts = ["-Wthread-safety-analysis"],
     deps = [
-        ":file_logger_client_interface",
-        ":file_logger_client_no_op",
         ":utils",
         "@com_google_googletest//:gtest_main",
     ],
-)
-
-cc_library(
-    name = "file_logger_client_interface",
-    hdrs = ["file_logger_client_interface.h"],
-    visibility = [
-        "//learning/processing/tf_data_logger/client:__subpackages__",
-        "//tensorflow:internal",
-    ],
-)
-
-cc_library(
-    name = "file_logger_client_no_op",
-    hdrs = ["file_logger_client_no_op.h"],
-    deps = [":file_logger_client_interface"],
 )

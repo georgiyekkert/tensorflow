@@ -57,6 +57,10 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
 
+#if defined(XLA_ENABLE_XCCL) && defined(XLA_ENABLE_CUDA)
+#include "third_party/nccl/nccl.h"
+#endif  // XLA_ENABLE_XCCL && XLA_ENABLE_CUDA
+
 static constexpr bool FLAGS_gpuexec_cuda_driver_inject_init_error = false;
 static constexpr bool FLAGS_gpuexec_cuda_sync_around_driver_calls = false;
 static constexpr bool FLAGS_gpuexec_cuda_device_0_only = false;
@@ -564,7 +568,7 @@ static std::string_view StreamCaptureModeToString(
 
 /* static */ tsl::Status GpuDriver::GraphInstantiate(
     CUgraphExec* exec, CUgraph graph, const GraphInstantiateFlags& flags) {
-  VLOG(2) << "Instante CUDA executable graph from graph " << graph << " ("
+  VLOG(2) << "Instantiate CUDA executable graph from graph " << graph << " ("
           << "auto_free_on_launch=" << flags.auto_free_on_launch << ", "
           << "device_launch=" << flags.device_launch << ", "
           << "use_node_priority=" << flags.use_node_prirotiy << ", "
@@ -596,6 +600,18 @@ static std::string_view StreamCaptureModeToString(
           << stream;
   RETURN_IF_CUDA_RES_ERROR(cuGraphLaunch(exec, stream),
                            "Failed to launch CUDA graph");
+  return ::tsl::OkStatus();
+}
+
+/* static */ tsl::Status GpuDriver::GraphNodeSetEnabled(CUgraphExec exec,
+                                                        CUgraphNode node,
+                                                        bool enabled) {
+  // Node is enabled if value != 0, otherwise the node is disabled.
+  unsigned value = enabled ? 1 : 0;
+  VLOG(2) << "Set CUDA executable graph " << exec << " node " << node
+          << " enabled flag to " << value;
+  RETURN_IF_CUDA_RES_ERROR(cuGraphNodeSetEnabled(exec, node, value),
+                           "Failed to set CUDA graph node enabled flag");
   return ::tsl::OkStatus();
 }
 
@@ -709,8 +725,8 @@ GpuDriver::GraphNodeGetType(CUgraphNode node) {
   return ::tsl::OkStatus();
 }
 
-/* static */ tsl::Status GpuDriver::GraphDebugDotPrint(CUgraph graph,
-                                                       const char* path) {
+/* static */ tsl::StatusOr<std::string> GpuDriver::GraphDebugDotPrint(
+    CUgraph graph, const char* path, bool return_printed_graph) {
 #if CUDA_VERSION >= 12000
   VLOG(2) << "Print CUDA graph " << graph << " debug dot file to " << path;
 
@@ -718,17 +734,17 @@ GpuDriver::GraphNodeGetType(CUgraphNode node) {
   RETURN_IF_CUDA_RES_ERROR(cuGraphDebugDotPrint(graph, path, flags),
                            "Failed to print gpu graph debug file");
 
-  if (VLOG_IS_ON(100)) {
+  if (return_printed_graph) {
     std::string data;
     if (tsl::ReadFileToString(tsl::Env::Default(), path, &data).ok()) {
-      VLOG(200) << "CUDA graph " << graph << " debug file:\n" << data;
+      return data;
     } else {
       LOG(WARNING) << "failed to read gpu graph debug file " << path;
     }
   }
 #endif  // CUDA_VERSION >= 12000
 
-  return ::tsl::OkStatus();
+  return std::string(path);
 }
 
 /* static */ tsl::Status GpuDriver::DeviceGraphMemTrim(CUdevice device) {
@@ -1611,6 +1627,56 @@ struct BitPatternToValue {
   }
 }
 
+/* static */ tsl::StatusOr<void*> GpuDriver::CollectiveMemoryAllocate(
+    GpuContext* context, uint64_t bytes) {
+  if (bytes == 0) {
+    return nullptr;
+  }
+
+  ScopedActivateContext activated{context};
+  void* ptr = nullptr;
+
+#if defined(XLA_ENABLE_XCCL) && defined(XLA_ENABLE_CUDA)
+  ncclResult_t res = ncclMemAlloc(&ptr, bytes);
+  if (res != ncclSuccess) {
+    return absl::InternalError(absl::StrFormat(
+        "failed to allocate %s (%llu bytes) from device collective memory: %s, "
+        "Last NCCL warning(error) log entry (may be unrelated): %s",
+        tsl::strings::HumanReadableNumBytes(bytes), bytes,
+        ncclGetErrorString(res), ncclGetLastError(nullptr)));
+  }
+#else
+  return absl::FailedPreconditionError(
+      "NCCL support was not built into XLA binary.");
+#endif
+
+  VLOG(2) << "allocated collective memory " << ptr << " for context "
+          << context->context() << " of " << bytes << " bytes";
+  return ptr;
+}
+
+/* static */ tsl::Status GpuDriver::CollectiveMemoryDeallocate(
+    GpuContext* context, void* location) {
+  ScopedActivateContext activation(context);
+
+#if defined(XLA_ENABLE_XCCL) && defined(XLA_ENABLE_CUDA)
+  ncclResult_t res = ncclMemFree(location);
+  if (res != ncclSuccess) {
+    return absl::InternalError(absl::StrFormat(
+        "failed to free device collective memory at %p; result: %s, Last NCCL "
+        "warning(error) log entry (may be unrelated): %s",
+        location, ncclGetErrorString(res), ncclGetLastError(nullptr)));
+  }
+#else
+  return absl::FailedPreconditionError(
+      "NCCL support was not built into XLA binary.");
+#endif
+
+  VLOG(2) << "deallocated collective memory " << location << " for context "
+          << context->context();
+  return tsl::OkStatus();
+}
+
 /* static */ void* GpuDriver::HostAllocate(GpuContext* context,
                                            uint64_t bytes) {
   ScopedActivateContext activation(context);
@@ -2346,14 +2412,11 @@ tsl::StatusOr<int64_t> GpuDriver::GetMaxSharedMemoryPerBlockOptin(
   return tsl::OkStatus();
 }
 
-/* static */ bool GpuDriver::GetDriverVersion(int* driver_version) {
-  CUresult res = cuDriverGetVersion(driver_version);
-  if (res != CUDA_SUCCESS) {
-    LOG(ERROR) << "failed to query driver version: " << ToString(res);
-    return false;
-  }
-
-  return true;
+/* static */ tsl::StatusOr<int32_t> GpuDriver::GetDriverVersion() {
+  int32_t version;
+  RETURN_IF_CUDA_RES_ERROR(cuDriverGetVersion(&version),
+                           "Could not get driver version");
+  return version;
 }
 
 /* static */ bool GpuDriver::GetDeviceProperties(CUdevprop* device_properties,

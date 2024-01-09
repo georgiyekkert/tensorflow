@@ -63,7 +63,10 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
+#include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -131,7 +134,6 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
       output_shape_(params.output_shape),
       allocations_(std::move(params.mlir_allocations)),
       buffer_assignment_(std::move(params.buffer_assignment)),
-      enable_persistent_temp_buffers_(params.enable_persistent_temp_buffers),
       debug_buffer_assignment_show_max_(
           params.debug_buffer_assignment_show_max),
       constants_(std::move(params.constants)),
@@ -156,14 +158,6 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
 GpuExecutable::~GpuExecutable() {
   if (has_module() && enable_debug_info_manager_) {
     XlaDebugInfoManager::Get()->UnregisterModule(module().unique_id());
-  }
-
-  // Deallocate all persistent buffers.
-  for (auto& [executor, map] : persistent_temp_buffers_) {
-    for (const auto& alloc_buffer : map) {
-      se::DeviceMemoryBase buffer = alloc_buffer.second;
-      executor->UnifiedMemoryDeallocate(buffer.opaque());
-    }
   }
 }
 
@@ -203,6 +197,7 @@ Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
 
 Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
                      const ThunkSequence& thunk_sequence,
+                     Thunk::ExecutableSource executable_source,
                      const ServiceExecutableRunOptions* run_options,
                      const BufferAllocations& buffer_allocations,
                      bool block_host_until_done,
@@ -215,7 +210,7 @@ Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
     stream_priority = stream_executor::StreamPriority::Highest;
   }
 
-  // Create the needed streams to support NcclCollectiveThunk.
+  // Borrow streams required for NcclCollectiveThunk.
   absl::InlinedVector<se::Stream*, kAsyncStreamTotal> async_comms_streams(
       kAsyncStreamTotal, nullptr);
   StatusOr<std::vector<StreamPool::Ptr>> streams = run_options->BorrowStreams(
@@ -225,11 +220,33 @@ Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
       async_comms_streams[i] = streams->at(i).get();
     }
   }
-  uint64_t start_nanos = tsl::Env::Default()->NowNanos();
+
+  // Borrow stream for tracing command buffers.
+  se::Stream* command_buffer_trace_stream = nullptr;
+  StatusOr<StreamPool::Ptr> borrowed_command_buffer_trace_stream =
+      run_options->BorrowStream(executor->device_ordinal());
+  if (borrowed_command_buffer_trace_stream.ok()) {
+    command_buffer_trace_stream = borrowed_command_buffer_trace_stream->get();
+  }
 
   tsl::profiler::TraceMe hlo_module_activity(
       [&] { return absl::StrCat(module_name, ":XLA GPU module"); },
       tsl::profiler::TraceMeLevel::kInfo);
+
+  uint64_t start_nanos = tsl::Env::Default()->NowNanos();
+
+  Thunk::ExecuteParams execute_params{*run_options, buffer_allocations,
+                                      main_stream, command_buffer_trace_stream,
+                                      async_comms_streams};
+
+  // Initialize thunks to prepare them for execution.
+  Thunk::InitializeParams initialize_params{
+      executor,    executable_source,           &buffer_allocations,
+      main_stream, command_buffer_trace_stream, &execute_params.nccl_params};
+
+  for (const std::unique_ptr<Thunk>& thunk : thunk_sequence) {
+    TF_RETURN_IF_ERROR(thunk->Initialize(initialize_params));
+  }
 
   for (const std::unique_ptr<Thunk>& thunk : thunk_sequence) {
     // Annotate execution of this op if tracing was enabled when we started
@@ -244,9 +261,7 @@ Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
       }
     }
 
-    Thunk::ExecuteParams thunk_params{*run_options, buffer_allocations,
-                                      main_stream, async_comms_streams};
-    TF_RETURN_IF_ERROR(thunk->ExecuteOnStream(thunk_params));
+    TF_RETURN_IF_ERROR(thunk->ExecuteOnStream(execute_params));
   }
   return MaybeSyncAndProfile(run_options, start_nanos,
                              block_host_until_done ? main_stream : nullptr);
@@ -449,8 +464,7 @@ static Status CheckAlignment(const BufferAllocation& allocation,
 StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
     VariantArguments arguments,
     const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
-    se::DeviceMemoryAllocator* const memory_allocator, int device_ordinal,
-    const BufferAllocToDeviceMemoryMap& buffer_alloc_to_persistent_memory_map) {
+    se::DeviceMemoryAllocator* const memory_allocator, int device_ordinal) {
   tsl::profiler::TraceMe hlo_module_activity(
       [&] { return std::string("Build buffer allocations"); },
       tsl::profiler::TraceMeLevel::kInfo);
@@ -461,18 +475,11 @@ StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
   buffers.reserve(num_buffers);
   for (int64_t i = 0; i < num_buffers; ++i) {
     const BufferAllocation& allocation = allocations[i];
-    // Check if the buffer is already stored as a persistent buffer.
-    se::DeviceMemoryBase buffer;
-    if (buffer_alloc_to_persistent_memory_map.contains(allocation.index())) {
-      buffer = buffer_alloc_to_persistent_memory_map.at(allocation.index());
-    } else {
-      TF_ASSIGN_OR_RETURN(
-          buffer, BufferForAllocation(arguments, globals, allocation,
-                                      memory_allocator, device_ordinal, i));
-    }
-
-    buffers.push_back(buffer);
-    TF_RETURN_IF_ERROR(CheckAlignment(allocation, buffer, i));
+    TF_ASSIGN_OR_RETURN(
+        buffers.emplace_back(),
+        BufferForAllocation(arguments, globals, allocations[i],
+                            memory_allocator, device_ordinal, i));
+    TF_RETURN_IF_ERROR(CheckAlignment(allocation, buffers.back(), i));
   }
   return {{buffers, device_ordinal, memory_allocator}};
 }
@@ -518,32 +525,6 @@ static Status ExecuteXlaRuntime(const std::string& module_name,
       block_host_until_done ? run_options->stream() : nullptr);
 }
 
-Status GpuExecutable::PopulatePersistentTempBuffers(
-    se::StreamExecutor* executor) {
-  auto search = persistent_temp_buffers_.find(executor);
-  if (search != persistent_temp_buffers_.end()) {
-    return OkStatus();
-  }
-
-  // Allocate persistent temp buffers.
-  BufferAllocToDeviceMemoryMap buffer_alloc_to_device_memory_map;
-  for (const BufferAllocation& allocation : GetAllocations()) {
-    if (!allocation.IsPreallocatedTempBuffer()) {
-      continue;
-    }
-
-    const int64_t buffer_size = allocation.size();
-    void* ptr = executor->UnifiedMemoryAllocate(buffer_size);
-    if (ptr) {
-      se::DeviceMemoryBase buffer(ptr, buffer_size);
-      buffer_alloc_to_device_memory_map[allocation.index()] = buffer;
-    }
-  }
-
-  persistent_temp_buffers_[executor] = buffer_alloc_to_device_memory_map;
-  return OkStatus();
-}
-
 StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     const ServiceExecutableRunOptions* run_options,
     VariantArguments arguments) {
@@ -558,21 +539,6 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   se::gpu::GpuExecutor* gpu_executor = se::gpu::ExtractGpuExecutor(executor);
   se::gpu::ScopedActivateExecutorContext activation(gpu_executor);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-
-  // If persistent buffers are enabled, the executable cannot execute
-  // concurrently, therefore performance can suffer under contention.
-  absl::MutexLockMaybe lock(
-      enable_persistent_temp_buffers_ ? &persistent_temp_buffers_mu_ : nullptr);
-
-  // Map from buffer allocation to persistent temp buffers. It is empty if
-  // persistent temp buffer is not enabled.
-  BufferAllocToDeviceMemoryMap persistent_buffers_map = {};
-
-  if (enable_persistent_temp_buffers_) {
-    persistent_temp_buffers_mu_.AssertHeld();
-    TF_RETURN_IF_ERROR(PopulatePersistentTempBuffers(executor));
-    persistent_buffers_map = persistent_temp_buffers_[executor];
-  }
 
   // Force synchronous execution if the allocator requires it.
   const bool block_host_until_done =
@@ -606,7 +572,7 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   TF_ASSIGN_OR_RETURN(
       BufferAllocations buffer_allocations,
       GenerateBufferAllocations(arguments, globals, memory_allocator,
-                                device_ordinal, persistent_buffers_map));
+                                device_ordinal));
   VLOG(2) << buffer_allocations.ToString();
   std::set<se::DeviceMemoryBase> buffers_in_result;
 
@@ -724,15 +690,8 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   TF_RETURN_IF_ERROR(ExecuteThunksOrXlaRuntime(
       run_options, buffer_allocations, block_host_until_done, gpu_lock));
 
-  // Free all temporary allocations.
-  std::vector<BufferAllocation> non_persistent_allocations;
-  for (const BufferAllocation& allocation : GetAllocations()) {
-    if (!persistent_buffers_map.contains(allocation.index())) {
-      non_persistent_allocations.push_back(allocation);
-    }
-  }
-  TF_RETURN_IF_ERROR(buffer_allocations.TearDown(buffers_in_result,
-                                                 non_persistent_allocations));
+  TF_RETURN_IF_ERROR(
+      buffer_allocations.TearDown(buffers_in_result, GetAllocations()));
 
   // Free allocations for arguments.
   if (auto args = std::get_if<absl::Span<ExecutionInput>>(&arguments)) {
@@ -782,15 +741,11 @@ Status GpuExecutable::ExecuteThunksOrXlaRuntime(
   ModuleAnnotationManager set_current_kernel_annotations{annotation_info_};
 
   if (thunks_) {
-    se::StreamExecutor* executor = run_options->stream()->parent();
     Thunk::ExecutableSource executable_source = {text_, binary_};
-    for (const std::unique_ptr<Thunk>& thunk : *thunks_) {
-      TF_RETURN_IF_ERROR(thunk->Initialize(executor, executable_source));
-    }
 
     return ExecuteThunks(
-        module_name_, unique_id, *thunks_, run_options, buffer_allocations,
-        block_host_until_done,
+        module_name_, unique_id, *thunks_, executable_source, run_options,
+        buffer_allocations, block_host_until_done,
         /*use_highest_priority_for_async_stream*/
         has_module() ? module_config()
                            .debug_options()

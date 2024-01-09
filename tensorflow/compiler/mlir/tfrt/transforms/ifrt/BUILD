@@ -1,3 +1,4 @@
+load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("//tensorflow:tensorflow.bzl", "if_google", "tf_cc_test")
 
 package(
@@ -19,6 +20,33 @@ package_group(
     ]),
 )
 
+gentbl_cc_library(
+    name = "pass_inc_gen",
+    tbl_outs = [
+        (
+            [
+                "-gen-pass-decls",
+                "-name=TfrtIfrtServing",
+            ],
+            "passes.h.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "passes.td",
+    deps = [
+        "@llvm-project//mlir:PassBaseTdFiles",
+    ],
+)
+
+cc_library(
+    name = "ifrt_constants",
+    srcs = [],
+    hdrs = ["ifrt_constants.h"],
+    deps = [
+        "@com_google_absl//absl/strings",
+    ],
+)
+
 cc_library(
     name = "tf_ifrt_passes",
     srcs = [
@@ -26,18 +54,24 @@ cc_library(
         "tf_ifrt_passes.cc",
     ],
     hdrs = [
-        "rewrite_cluster_to_ifrt_call.h",
         "tf_ifrt_passes.h",
     ],
+    textual_hdrs = ["passes.h.inc"],
     deps = [
+        ":ifrt_constants",
+        ":pass_inc_gen",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tensorflow:bridge_logger",
+        "//tensorflow/compiler/mlir/tensorflow:device_util",
         "//tensorflow/compiler/mlir/tensorflow:dump_mlir_util",
         "//tensorflow/compiler/mlir/tensorflow:error_util",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops",
+        "//tensorflow/compiler/mlir/tensorflow:tpu_rewrite_device_util",
         "//tensorflow/compiler/mlir/tensorflow/transforms:tensorflow_passes",
+        "//tensorflow/compiler/mlir/tensorflow/transforms/host_runtime:tpu_metadata_utils",
         "//tensorflow/core:framework",
         "//tensorflow/core/platform:random",
+        "//tensorflow/core/protobuf/tpu:compile_metadata_proto_cc",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -47,6 +81,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
+        "@local_tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -55,6 +90,7 @@ cc_library(
     srcs = ["tf2hlo.cc"],
     hdrs = ["tf2hlo.h"],
     deps = [
+        ":ifrt_constants",
         "//tensorflow/compiler/jit:xla_cpu_jit",
         "//tensorflow/compiler/mlir/tensorflow:dump_mlir_util",
         "//tensorflow/compiler/mlir/tensorflow:serialize_mlir_module_utils",
@@ -66,6 +102,7 @@ cc_library(
         "//tensorflow/core:lib_headers_for_pybind",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/protobuf/tpu:compile_metadata_proto_cc",
+        "//tensorflow/core/protobuf/tpu:topology_proto_cc",
         "//tensorflow/core/tpu/kernels:tpu_compile_op_support",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -78,11 +115,14 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@local_tsl//tsl/platform:errors",
+        "@local_tsl//tsl/platform:protobuf",
         "@local_tsl//tsl/platform:statusor",
         "@local_xla//xla:shape_util",
         "@local_xla//xla:xla_data_proto_cc",
         "@local_xla//xla/client:client_library",
         "@local_xla//xla/python/ifrt",
+        "@local_xla//xla/service:computation_placer_hdr",
+        "@local_xla//xla/service/llvm_ir:llvm_util",
         "@local_xla//xla/stream_executor",
         "@local_xla//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
     ],
@@ -104,11 +144,13 @@ tf_cc_test(
         "//tensorflow/core:framework",
         "//tensorflow/core:test",
         "//tensorflow/core/platform:resource_loader",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
+        "@local_tsl//tsl/platform:protobuf",
         "@local_tsl//tsl/platform:statusor",
         "@local_xla//xla/python/ifrt",
         "@local_xla//xla/python/ifrt:test_util",

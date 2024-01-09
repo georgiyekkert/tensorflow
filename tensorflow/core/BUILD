@@ -647,7 +647,7 @@ cc_library(
         "//tensorflow/core/kernels/mkl:mkl_batch_matmul_op",
         "//tensorflow/core/kernels/mkl:mkl_einsum_op",
         "//tensorflow/core/kernels/mkl:mkl_matmul_op",
-        "//tensorflow/core/kernels/mkl:mkl_tmp_bf16_ops",
+        "//tensorflow/core/kernels/mkl:mkl_tmp_ops",
         "//tensorflow/core/kernels/mkl:mkl_deprecated_ops",
     ]) + if_cuda_or_rocm([
         "//tensorflow/core/kernels:cudnn_rnn_kernels",
@@ -664,7 +664,9 @@ cc_library(
 
 cc_library(
     name = "dynamic_kernels_impl",
-    visibility = [":__subpackages__"],
+    visibility = [
+        "//visibility:private",  # Only private by automation, not intent. Owner may accept CLs adding visibility. See go/scheuklappen#explicit-private.
+    ],
     deps = [
         "//tensorflow/core/kernels:sobol_op",
     ],
@@ -1405,7 +1407,6 @@ cc_library(
         "//tensorflow/core/platform:fingerprint",
         "//tensorflow/core/platform:hash",
         "//tensorflow/core/platform:load_library",
-        "//tensorflow/core/platform:logger",
         "//tensorflow/core/platform:mutex",
         "//tensorflow/core/platform:net",
         "//tensorflow/core/platform:notification",
@@ -1988,7 +1989,7 @@ tf_cc_test_mkl(
         "//tensorflow/core/kernels/mkl:mkl_relu_op",
         "//tensorflow/core/kernels/mkl:mkl_softmax_op",
         "//tensorflow/core/kernels/mkl:mkl_transpose_op",
-        "//tensorflow/core/kernels/mkl:mkl_tmp_bf16_ops",
+        "//tensorflow/core/kernels/mkl:mkl_tmp_ops",
         "//tensorflow/core/kernels/mkl:mkl_deprecated_ops",
     ]),
 )

@@ -17,6 +17,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_traversal.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/statusor.h"
@@ -93,10 +94,8 @@ TEST_F(HloFusionAnalysisTest, ReductionWithMultipleUsers) {
                          HloFusionAdaptor::ForInstruction(
                              module->entry_computation()->root_instruction()),
                          &device_info));
-  // This fusion cannot use the reduction emitter because the reduce has two
-  // users.
   EXPECT_EQ(analysis.GetEmitterFusionKind(),
-            HloFusionAnalysis::EmitterFusionKind::kLoop);
+            HloFusionAnalysis::EmitterFusionKind::kReduction);
 }
 
 TEST_F(HloFusionAnalysisTest, ReductionEpilogueFusion) {

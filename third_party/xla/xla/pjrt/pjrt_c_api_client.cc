@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -56,6 +57,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/compile_options.pb.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -455,7 +457,7 @@ PjRtCApiClient::BufferFromHostBufferInternalImpl(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
-    std::function<void()> on_done_with_host_buffer,
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer,
     std::variant<PjRtDevice*, PjRtMemorySpace*> device_or_memory,
     const Layout* device_layout) {
   if (host_buffer_semantics != HostBufferSemantics::kImmutableOnlyDuringCall &&
@@ -523,17 +525,17 @@ PjRtCApiClient::BufferFromHostBufferInternalImpl(
     event_args.struct_size = PJRT_Event_OnReady_Args_STRUCT_SIZE;
     event_args.priv = nullptr;
     event_args.event = event.get();
-    event_args.user_arg = new std::function<void(PJRT_Error*)>(
+    event_args.user_arg = new absl::AnyInvocable<void(PJRT_Error*)>(
         [on_done_with_host_buffer = std::move(on_done_with_host_buffer),
-         c_api = c_api_](PJRT_Error* error) {
+         c_api = c_api_](PJRT_Error* error) mutable {
           if (error) {
             ::pjrt::MakeErrorDeleter(c_api)(error);
           }
-          on_done_with_host_buffer();
+          std::move(on_done_with_host_buffer)();
         });
     event_args.callback = [](PJRT_Error* error, void* args) {
-      std::function<void(PJRT_Error*)>* on_done_with_host_buffer =
-          reinterpret_cast<std::function<void(PJRT_Error*)>*>(args);
+      auto* on_done_with_host_buffer =
+          reinterpret_cast<absl::AnyInvocable<void(PJRT_Error*)>*>(args);
       (*on_done_with_host_buffer)(error);
       delete on_done_with_host_buffer;
     };
@@ -549,32 +551,33 @@ StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::BufferFromHostBuffer(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
-    std::function<void()> on_done_with_host_buffer,
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer,
     PjRtMemorySpace* memory_space, const Layout* device_layout) {
   return BufferFromHostBufferInternalImpl(
       data, type, dims, byte_strides, host_buffer_semantics,
-      on_done_with_host_buffer, memory_space, device_layout);
+      std::move(on_done_with_host_buffer), memory_space, device_layout);
 }
 
 StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::BufferFromHostBuffer(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
-    std::function<void()> on_done_with_host_buffer, PjRtDevice* device,
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer, PjRtDevice* device,
     const Layout* device_layout) {
   return BufferFromHostBufferInternalImpl(
       data, type, dims, byte_strides, host_buffer_semantics,
-      on_done_with_host_buffer, device, device_layout);
+      std::move(on_done_with_host_buffer), device, device_layout);
 }
 
 StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::BufferFromHostBuffer(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
-    std::function<void()> on_done_with_host_buffer, PjRtDevice* device) {
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+    PjRtDevice* device) {
   return BufferFromHostBufferInternalImpl(
       data, type, dims, byte_strides, host_buffer_semantics,
-      on_done_with_host_buffer, device, /*device_layout=*/nullptr);
+      std::move(on_done_with_host_buffer), device, /*device_layout=*/nullptr);
 }
 
 StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::CreateViewOfDeviceBuffer(
@@ -2216,8 +2219,7 @@ StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiCompiler::Compile(
 StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(
     absl::string_view device_type,
     const absl::flat_hash_map<std::string, PjRtValueType>& create_options,
-    PjRtClient::KeyValueGetCallback kv_get,
-    PjRtClient::KeyValuePutCallback kv_put) {
+    std::shared_ptr<KeyValueStoreInterface> kv_store) {
   TF_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(device_type));
   if (c_api == nullptr) {
     return InternalError("PJRT C API is nullptr for %s", device_type);
@@ -2234,19 +2236,12 @@ StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(
   init_args.num_options = c_options.size();
 
   std::unique_ptr<pjrt::PJRT_KeyValueCallbackData> kv_callback_data;
-  if (kv_get == nullptr && kv_put == nullptr) {
-    kv_callback_data = nullptr;
-  } else if (kv_get != nullptr && kv_put != nullptr) {
-    kv_callback_data = pjrt::ConvertToCKeyValueCallbacks(kv_get, kv_put);
+  if (kv_store) {
+    kv_callback_data = pjrt::ConvertToCKeyValueCallbacks(kv_store);
     init_args.kv_get_callback = kv_callback_data->c_kv_get;
     init_args.kv_get_user_arg = &kv_callback_data->kv_get_c_func;
     init_args.kv_put_callback = kv_callback_data->c_kv_put;
     init_args.kv_put_user_arg = &kv_callback_data->kv_put_c_func;
-  } else {
-    return InvalidArgument(
-        "Only one of KeyValueGetCallback and KeyValuePutCallback is set in "
-        "GetCApiClient for %s",
-        device_type);
   }
 
   RETURN_STATUS_IF_PJRT_ERROR(c_api->PJRT_Client_Create(&init_args), c_api);

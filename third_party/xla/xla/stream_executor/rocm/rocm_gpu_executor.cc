@@ -214,10 +214,7 @@ tsl::Status GpuExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
   hipModule_t module = nullptr;
   const string* kernel_name;
 
-  if (spec.has_cuda_cubin_on_disk()) {
-    return tsl::errors::Internal(
-        "Loading ROCM kernel from disk is not supported");
-  } else if (spec.has_cuda_cubin_in_memory()) {
+  if (spec.has_cuda_cubin_in_memory()) {
     kernel_name = &spec.cuda_cubin_in_memory().kernel_name();
 
     const char* hsaco = spec.cuda_cubin_in_memory().bytes();
@@ -851,10 +848,9 @@ GpuExecutor::CreateDeviceDescription(int device_ordinal) {
   internal::DeviceDescriptionBuilder builder;
 
   {
-    int driver_version = 0;
-    (void)GpuDriver::GetDriverVersion(&driver_version);
+    int version = GpuDriver::GetDriverVersion().value_or(-1);
     string augmented_driver_version = absl::StrFormat(
-        "%d (%s)", driver_version,
+        "%d (%s)", version,
         rocm::DriverVersionStatusToString(Diagnostician::FindDsoVersion())
             .c_str());
     builder.set_driver_version(augmented_driver_version);

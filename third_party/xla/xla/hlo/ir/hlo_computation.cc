@@ -107,7 +107,9 @@ HloComputation::HloComputation(
       collective_call_instruction_(nullptr),
       is_collective_called_computation_(false),
       while_call_instruction_(nullptr),
-      is_while_call_body_computation_(false) {
+      is_while_call_body_computation_(false),
+      conditional_call_instruction_(nullptr),
+      is_conditional_branch_computation_(false) {
   param_instructions_.resize(parameter_count, nullptr);
   bool root_found = false;
   for (auto& instruction : *instructions) {
@@ -401,7 +403,12 @@ Status HloComputation::RemoveInstructionImpl(HloInstruction* instruction,
   to_be_deleted_.back()->DetachFromOperandsAndUsers();
   // Clear all operands to avoid Null operands.
   to_be_deleted_.back()->RemoveAllOperands();
-  to_be_deleted_.back()->ClearCalledComputations();
+  // These require non-trivial cleanup for their called computations,
+  // which is invoked in the ops destructor.
+  if (!to_be_deleted_.back()->IsAsynchronous() &&
+      !to_be_deleted_.back()->IsFused()) {
+    to_be_deleted_.back()->ClearCalledComputations();
+  }
   to_be_deleted_.back()->MarkAsDead();
   instructions_.erase(inst_it->second);
   instruction_iterators_.erase(inst_it);

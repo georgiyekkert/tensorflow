@@ -26,10 +26,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/meta/type_traits.h"
 #include "absl/synchronization/mutex.h"
@@ -376,11 +374,12 @@ class GpuPriorityFusionQueue : public FusionQueue {
     }
 
     GpuPerformanceModel::RunTimes run_times =
-        GpuPerformanceModel::EstimateRunTimes(
+        GpuPerformanceModel::EstimateRunTimesForPriorityFusion(
             producer, &cost_analysis_,
             GpuPerformanceModelOptions::PriorityFusion(
                 &fusion_analysis_cache_, &gpu_performance_model_cache_),
             producer->users());
+
     if (fusion_process_dump_) {
       absl::MutexLock lock(&fusion_process_dump_mutex_);
       auto* step =
@@ -611,6 +610,19 @@ class GpuPriorityFusionQueue : public FusionQueue {
   return InstructionFusion::IsExpensive(instruction);
 }
 
+// Return true, if instr is a small constant.
+//
+// There is not single definition for what is a small constant in XLA.
+// IrEmitterContext::emit_constant treats as small only constants of 1 element.
+// HloPrintOptions::print_large_constants is effective for constants larger
+// than 10 elements.
+//
+// This function matches the emitter logic.
+bool IsSmallConstant(const HloInstruction* instr) {
+  return instr->opcode() == HloOpcode::kConstant && instr->shape().IsArray() &&
+         ShapeUtil::ElementsIn(instr->shape()) <= 1;
+}
+
 StatusOr<bool> GpuPriorityFusion::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -631,7 +643,8 @@ StatusOr<bool> GpuPriorityFusion::Run(
   // are not used in the pipeline, but it makes debugging much easier.
   for (auto* computation : GetFusionComputations(module, execution_threads)) {
     for (auto* instruction : computation->instructions()) {
-      instruction->SetAndSanitizeName(absl::StrCat(instruction->name(), ".0"));
+      module->SetAndUniquifyInstrName(instruction,
+                                      absl::StrCat(instruction->name(), ".0"));
     }
   }
 
@@ -644,16 +657,23 @@ StatusOr<bool> GpuPriorityFusion::Run(
     for (auto* computation : GetFusionComputations(module, execution_threads)) {
       std::vector<HloInstruction*> constants;
       for (auto* instruction : computation->instructions()) {
-        if (instruction->opcode() == HloOpcode::kConstant) {
+        // Small constants should be fused, because they can be folded and
+        // codegened efficiently.
+        // Fusing large constants doesn't give much benefits, because they're
+        // treated like parameters and read from global memory anyway. Fusion
+        // and duplication of large constants can, however, cause problems if we
+        // want to dump hlo and parse back, because in that case duplicated
+        // constants will be filled with different data.
+        if (IsSmallConstant(instruction)) {
           constants.push_back(instruction);
         }
       }
       for (auto* constant : constants) {
         auto users = constant->users();
         for (auto* user : users) {
-          if (IsFusible(*user)) {
-            result.value() = true;
+          if (IsFusible(*user) && CanEmitInputFusedScatter(*constant, *user)) {
             InstructionFusion::Fuse(constant, user, computation);
+            result = true;
           }
         }
       }

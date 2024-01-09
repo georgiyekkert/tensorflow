@@ -20,7 +20,6 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -43,7 +42,6 @@ limitations under the License.
 #include "xla/stream_executor/numeric_options.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/port.h"
-#include "xla/stream_executor/trace_listener.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/threadpool.h"
 #include "tsl/protobuf/dnn.pb.h"
@@ -176,6 +174,16 @@ class StreamExecutor {
   // Deallocates unified memory space previously allocated with
   // UnifiedMemoryAllocate.
   void UnifiedMemoryDeallocate(void* location);
+
+  // Allocate collective device memory using ncclMemAlloc.
+  // See
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/bufferreg.html
+  // for more details on User Buffer Registration.
+  tsl::StatusOr<void*> CollectiveMemoryAllocate(uint64_t bytes);
+
+  // Deallocate collective device memory previously allocated with
+  // CollectiveMemoryAllocate.
+  tsl::Status CollectiveMemoryDeallocate(void* location);
 
   // Allocates a region of host memory and registers it with the platform API.
   // Memory allocated in this manner (or allocated and registered with
@@ -443,18 +451,6 @@ class StreamExecutor {
   // underlying platform.
   blas::BlasSupport* AsBlas();
 
-  // Registers a trace listener to receive callbacks for only a single
-  // StreamExecutor instance.
-  // To register a listener for all executors for a given platform, see
-  // Platform::RegisterTraceListener().
-  // Does not take ownership of listener.
-  void RegisterTraceListener(TraceListener* listener);
-
-  // Removes a TraceListener from this StreamExecutor instance.
-  // Returns false (and logs) in cases where the argument listener was not
-  // previously registered.
-  bool UnregisterTraceListener(TraceListener* listener);
-
   // Return allocator statistics.
   std::optional<AllocatorStats> GetAllocatorStats();
 
@@ -564,14 +560,6 @@ class StreamExecutor {
   // there, temporary internal buffers are freed using this method.
   void EnqueueOnBackgroundThread(std::function<void()> task);
 
-  // Calls the relevant TraceListener routine to begin tracing for the specified
-  // asynchronous method.
-  template <typename TraceCallT, typename... ArgsT>
-  void SubmitTrace(TraceCallT trace_call, ArgsT&&... args);
-
-  // Reader/writer lock for class-static StreamExecutor members.
-  static absl::Mutex static_mu_;
-
   // Reader/writer lock for mutable data structures on this StreamExecutor.
   //
   // Mutable so that caching functions (like DeviceDescription, AsBlas, etc.)
@@ -628,12 +616,6 @@ class StreamExecutor {
   // Only one worker thread is needed; little work will be done by the
   // executor.
   static constexpr int kNumBackgroundThreads = 1;
-
-  // Indicates if StreamExecutor operation tracing should be performed.
-  bool tracing_enabled_;
-
-  // The set of TraceListeners registered for this StreamExecutor.
-  std::set<TraceListener*> listeners_ ABSL_GUARDED_BY(mu_);
 
   // Memory limit in bytes. Value less or equal to 0 indicates there is no
   // limit.

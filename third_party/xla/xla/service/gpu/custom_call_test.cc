@@ -13,12 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
 #include <cstdint>
+#include <ostream>
 #include <sstream>
 #include <string>
+#include <vector>
+
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "xla/shape.h"
+#include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA
-#include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cuda/include/cuda.h"  // IWYU pragma: keep
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #define PLATFORM "CUDA"
@@ -38,10 +46,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/runtime/custom_call.h"
 #include "xla/runtime/custom_call_registry.h"
-#include "xla/runtime/executable.h"
+#include "xla/runtime/executable.h"  // IWYU pragma: keep
 #include "xla/runtime/memref_view.h"
-#include "xla/runtime/module.h"
-#include "xla/runtime/module_registry.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/runtime/custom_call_registry.h"
@@ -434,9 +440,9 @@ XLA_GPU_REGISTER_RUNTIME_CUSTOM_CALL(RegisterCustomCalls);
 // (5) Register XLA FFI handlers with XLA runtime.
 
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__gpu$xla.gpu.ext.always_fail",
-                         kAlwaysFail);
+                         PLATFORM, kAlwaysFail);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__gpu$xla.gpu.ext.memcpy",
-                         kMemcpy);
+                         PLATFORM, kMemcpy);
 
 TEST_F(CustomCallTest, RuntimeCustomCallAlwaysFail) {
   XlaBuilder b(TestName());
@@ -493,7 +499,7 @@ XLA_FFI_DEFINE_HANDLER(kMemcpyWithCalledComputation,
 
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
                          "__gpu$xla.gpu.ext.memcpy_with_called_compuation",
-                         kMemcpyWithCalledComputation);
+                         PLATFORM, kMemcpyWithCalledComputation);
 
 TEST_F(CustomCallTest, WithCalledComputation) {
   // FFI handlers with called computations supported only with Thunks runtime.

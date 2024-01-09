@@ -1317,6 +1317,7 @@ cc_library(
         "//tensorflow/core:graph",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/config:flag_defs",
     ],
 )
 
@@ -1919,7 +1920,6 @@ cc_library(
     deps = [
         ":device_factory",
         ":local_device",
-        ":loose_headers",
         ":node_file_writer",
         ":scoped_allocator",
         ":session_options",
@@ -2272,24 +2272,6 @@ cc_library(
         "//tensorflow/core/platform:stringpiece",
         "@com_google_absl//absl/container:flat_hash_set",
     ],
-)
-
-# For a more maintainable build this target should not exist and the headers
-# should  be split into the existing cc_library targets, but this change was
-# automatically  done so that we can remove long standing issues and complexity
-# in the build system. It's up to the OWNERS of this package to get rid of it or
-# not. The use of the textual_hdrs attribute is discouraged, use hdrs instead.
-# Here it is used to avoid header parsing errors in packages where the feature
-# parse_headers was enabled since loose headers were not being parsed. See
-# go/loose-lsc-one-target-approach for more details.
-cc_library(
-    name = "loose_headers",
-    tags = ["avoid_dep"],
-    textual_hdrs = [
-        "gpu_device_context.h",
-        "mkl_cpu_allocator.h",
-    ],
-    visibility = [":__pkg__"],
 )
 
 # -----------------------------------------------------------------------------
@@ -3193,6 +3175,7 @@ tf_cc_test(
     name = "lower_while_op_test",
     size = "small",
     srcs = ["lower_while_op_test.cc"],
+    env = {"TF_FLAG_ENABLE_COLOCATION_KEY_PROPAGATION_IN_WHILE_OP_LOWERING": "1"},
     deps = [
         ":core_cpu",
         ":core_cpu_internal",
@@ -3210,8 +3193,8 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -3533,5 +3516,15 @@ cc_library(
     features = ["-layering_check"],
     deps = [
         ":serving_device_selector",
+    ],
+)
+
+cc_library(
+    name = "device_id_utils",
+    hdrs = ["device_id_utils.h"],
+    deps = [
+        "@local_tsl//tsl/framework:device_id_impl",
+        "@local_xla//xla/stream_executor",
+        "@local_xla//xla/stream_executor:platform",
     ],
 )

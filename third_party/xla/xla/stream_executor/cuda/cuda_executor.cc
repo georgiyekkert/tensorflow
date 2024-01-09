@@ -494,10 +494,11 @@ tsl::Status GpuExecutor::Launch(Stream* stream, const ThreadDim& thread_dims,
   // For device memory array we rely on a custom kernel arguments packing.
   if (auto* device_mem = DynCast<KernelArgsDeviceMemoryArray>(&args)) {
     auto& pack = kernel.kernel_args_packing();
-    if (!pack)
+    if (!pack) {
       return absl::InternalError(
           "Kernel is missing a custom arguments packing function for device "
           "memory arguments array");
+    }
 
     TF_ASSIGN_OR_RETURN(auto packed, pack(kernel, *device_mem));
     return launch(*packed);
@@ -598,6 +599,13 @@ int GpuExecutor::CompareOccupancy(int* initial_blocks,
 }
 
 DeviceMemoryBase GpuExecutor::Allocate(uint64_t size, int64_t memory_space) {
+  if (memory_space == 1) {
+    auto result = GpuDriver::CollectiveMemoryAllocate(context_, size);
+    if (!result.ok()) {
+      LOG(ERROR) << result.status();
+    }
+    return DeviceMemoryBase(*result, size);
+  }
   CHECK_EQ(memory_space, 0);
   return DeviceMemoryBase(GpuDriver::DeviceAllocate(context_, size), size);
 }
@@ -1024,8 +1032,7 @@ GpuExecutor::CreateDeviceDescription(int device_ordinal) {
   internal::DeviceDescriptionBuilder builder;
 
   {
-    int driver_version = 0;
-    (void)GpuDriver::GetDriverVersion(&driver_version);
+    int driver_version = GpuDriver::GetDriverVersion().value_or(0);
     std::string augmented_driver_version = absl::StrFormat(
         "%d (%s)", driver_version,
         cuda::DriverVersionStatusToString(Diagnostician::FindDsoVersion()));

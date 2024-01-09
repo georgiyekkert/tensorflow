@@ -1028,7 +1028,7 @@ func.func @broadcast_in_dim_c5(%arg0: tensor<3xi32>) -> tensor<1x2x3xi32> {
 // -----
 
 func.func @broadcast_in_dim_i2(%arg0: tensor<1x2xi32>) -> tensor<1x2x3xi32> {
-  // expected-error@+1 {{broadcast_dimensions has rank 2 instead of rank 1}}
+  // expected-error@+1 {{broadcast_dimensions size (4) does not match operand rank (2)}}
   %0 = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<[[1,1],[1,1]]> : tensor<2x2xi64>} : (tensor<1x2xi32>) -> tensor<1x2x3xi32>
   func.return %0 : tensor<1x2x3xi32>
 }
@@ -6282,7 +6282,7 @@ func.func @async_op(%arg0: tensor<10x10xf32>) -> tensor<32xf32>
 }
 
 func.func @async(%arg0: tensor<10x10xf32>) -> tensor<32xf32> {
-  // expected-error@+1 {{component #0 of return type doesn't match callee input types}}
+  // expected-error@+1 {{component #0 of async bundle doesn't match callee input types}}
   %0 = "mhlo.async_start"(%arg0) {called_computation=@async_op, execution_thread="thread"} : (tensor<10x10xf32>) -> !mhlo.async_bundle<tensor<10xf32>, tensor<32xf32>, tensor<i32>>
   %1 = "mhlo.async_update"(%0) {called_computation=@async_op, execution_thread="thread"} : (!mhlo.async_bundle<tensor<10xf32>, tensor<32xf32>, tensor<i32>>) -> !mhlo.async_bundle<tensor<10xf32>, tensor<32xf32>, tensor<i32>>
   %2 = "mhlo.async_done"(%1) {called_computation=@async_op, execution_thread="thread"} : (!mhlo.async_bundle<tensor<10xf32>, tensor<32xf32>, tensor<i32>>) -> tensor<32xf32>
@@ -6298,7 +6298,7 @@ func.func @async_op(%arg0: tensor<10x10xf32>) -> tensor<32xf32>
 }
 
 func.func @async(%arg0: tensor<10x10xf32>) -> tensor<32xf32> {
-  // expected-error@+1 {{component #1 of return type doesn't match callee result types}}
+  // expected-error@+1 {{component #1 of async bundle doesn't match callee result types}}
   %0 = "mhlo.async_start"(%arg0) {called_computation=@async_op, execution_thread="thread"} : (tensor<10x10xf32>) -> !mhlo.async_bundle<tensor<10x10xf32>, tensor<f32>, tensor<i32>>
   %1 = "mhlo.async_update"(%0) {called_computation=@async_op, execution_thread="thread"} : (!mhlo.async_bundle<tensor<10x10xf32>, tensor<f32>, tensor<i32>>) -> !mhlo.async_bundle<tensor<10x10xf32>, tensor<f32>, tensor<i32>>
   %2 = "mhlo.async_done"(%1) {called_computation=@async_op, execution_thread="thread"} : (!mhlo.async_bundle<tensor<10x10xf32>, tensor<f32>, tensor<i32>>) -> tensor<32xf32>
@@ -6343,7 +6343,7 @@ func.func @async_op(%arg0: tensor<10x10xf32>) -> tensor<32xf32>
 }
 
 func.func @async(%arg0: tensor<10x10xf32>) -> tensor<10x10xf32> {
-  // expected-error@+1 {{result is expected to be a bundle of at least 2 components, but got 1}}
+  // expected-error@+1 {{bundle is expected to have at least 2 components, but got 1}}
   %0 = "mhlo.async_start"(%arg0) {called_computation=@async_op, execution_thread="thread"} : (tensor<10x10xf32>) -> !mhlo.async_bundle<tensor<10x10xf32>>
   func.return %arg0 : tensor<10x10xf32>
 }

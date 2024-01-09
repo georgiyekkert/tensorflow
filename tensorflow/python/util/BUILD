@@ -91,6 +91,7 @@ tf_python_pybind_extension(
         "_pywrap_utils.pyi",
     ],
     deps = [
+        "//tensorflow/core:framework",
         "//tensorflow/core/platform:platform_port",
         "//tensorflow/python/lib/core:pybind11_lib",
         "//third_party/python_runtime:headers",
@@ -368,7 +369,6 @@ pytype_strict_library(
     srcs = ["tf_contextlib.py"],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//learning/brain/analytics:__subpackages__",
         "//learning/deepmind/research/language/translation/lm:__subpackages__",
         "//tensorflow:__pkg__",
         "//tensorflow:__subpackages__",
@@ -383,7 +383,6 @@ py_strict_library(
     srcs = ["tf_decorator.py"],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//learning/brain/analytics:__subpackages__",
         "//learning/deepmind/research/language/translation/lm:__subpackages__",
         "//tensorflow:__pkg__",
         "//tensorflow:__subpackages__",

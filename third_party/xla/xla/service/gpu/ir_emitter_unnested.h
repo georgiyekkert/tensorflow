@@ -23,6 +23,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -36,11 +37,8 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/elemental_ir_emitter.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
-#include "xla/service/gpu/fusions/tiling_util.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emitter.h"
-#include "xla/service/gpu/kernel_mapping_scheme.h"
-#include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime3/send_recv_thunk.h"
 #include "xla/service/gpu/thunk.h"
@@ -145,8 +143,10 @@ class IrEmitterUnnested : public IrEmitter {
       mlir::Operation* op,
       const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
           hlo_for_lmhlo);
+  Status EmitConditional(const HloInstruction* instr);
   Status EmitConvolutionThunk(mlir::Operation* op);
   Status EmitGemmThunk(mlir::Operation* op);
+  Status EmitGemmThunk(const HloCustomCallInstruction* instr);
 #if GOOGLE_CUDA || TF_HIPBLASLT
   Status EmitCublasLtMatmulThunk(mlir::Operation* op);
 #endif  // GOOGLE_CUDA || TF_HIPBLASLT
@@ -154,9 +154,6 @@ class IrEmitterUnnested : public IrEmitter {
   Status EmitCublasLtMatmulThunkF8(mlir::Operation* op);
   Status EmitConvolutionReorderThunk(mlir::Operation* op);
   Status EmitNormThunk(mlir::Operation* op);
-  StatusOr<FusionEmissionResult> EmitTritonFusion(
-      const HloFusionAnalysis& hlo_fusion_analysis,
-      const HloFusionInstruction* fusion, mlir::Operation* op);
   Status EmitFusedMHAThunk(mlir::Operation* op);
   Status EmitFusedMHABackwardThunk(mlir::Operation* op);
 #endif  // GOOGLE_CUDA
@@ -167,32 +164,36 @@ class IrEmitterUnnested : public IrEmitter {
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   Status EmitCustomCallThunk(mlir::Operation* op,
                              const HloCustomCallInstruction* instr);
+  Status EmitCustomCallThunk(const HloCustomCallInstruction* instr);
   Status EmitFftThunk(mlir::Operation* op);
   Status EmitFusion(
       mlir::Operation* op,
       const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
           hlo_for_lmhlo);
-  Status EmitFusion(
-      const HloFusionInstruction* instr, HloFusionAnalysis& fusion_analysis,
-      mlir::Operation* op,
-      const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
-          hlo_for_lmhlo);
+  Status EmitFusion(const HloFusionInstruction* instr,
+                    HloFusionAnalysis& fusion_analysis);
   Status EmitSelectAndScatter(
       mlir::Operation* op,
       const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
           hlo_for_lmhlo);
   Status EmitWhile(
-      mlir::Operation* op, const HloInstruction* instr,
+      mlir::Operation* op,
       const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
           hlo_for_lmhlo);
   Status EmitWhile(const HloInstruction* instr);
   Status EmitInfeed(mlir::Operation* op);
+  Status EmitInfeed(const HloInfeedInstruction* instr);
   Status EmitOutfeed(mlir::Operation* op);
+  Status EmitOutfeed(const HloOutfeedInstruction* instr);
   Status EmitRngGetAndUpdateState(mlir::Operation* op);
+  Status EmitRngGetAndUpdateState(
+      const HloRngGetAndUpdateStateInstruction* instr);
+
   Status EmitSort(mlir::Operation* op, const HloSortInstruction* sort);
   Status EmitSort(const HloSortInstruction* sort);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   Status EmitTriangularSolveCustomCall(mlir::Operation* op);
+  Status EmitTriangularSolveCustomCall(const HloInstruction* instr);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   Status EmitTopKCustomCall(const HloCustomCallInstruction* instr);
 
@@ -204,13 +205,20 @@ class IrEmitterUnnested : public IrEmitter {
 
   template <typename NcclThunkType, typename OpT>
   Status EmitNcclThunk(mlir::Operation* op);
-  template <typename OpT>
-  Status EmitNcclAsyncDone(Thunk::Kind kind, mlir::Operation* op);
+
+  Status EmitNcclAsyncDone(Thunk::Kind kind, mlir::Operation* op,
+                           mlir::Value token);
+
+  template <typename NcclThunkType, typename HloInstType>
+  Status EmitNcclThunk(Thunk::Kind kind, const HloInstruction* async_start,
+                       const HloInstType* inst,
+                       std::optional<bool> use_global_device_ids);
+
+  Status EmitNcclAsyncDone(Thunk::Kind kind, const HloInstruction* inst);
 
   template <typename ThunkType, typename OpT>
   Status EmitReplicaOrPartitionId(mlir::Operation* op);
 
-  template <typename NcclThunkType, typename OpT>
   Status EmitCollectivePermute(mlir::Operation* op);
 
   Status EmitOp(
@@ -229,6 +237,14 @@ class IrEmitterUnnested : public IrEmitter {
   // Add a owning Thunk object to the thunk sequence.
   void AddThunkToThunkSequence(std::unique_ptr<Thunk> thunk) {
     thunk_sequence_.emplace_back(std::move(thunk));
+  }
+
+  Status AddThunksToThunkSequence(StatusOr<FusionEmissionResult> result) {
+    TF_RETURN_IF_ERROR(result.status());
+    for (auto& thunk : result->thunks) {
+      AddThunkToThunkSequence(std::move(thunk));
+    }
+    return OkStatus();
   }
 
   // Load data from potentially unaligned address. If address is offset by
@@ -356,32 +372,6 @@ class IrEmitterUnnested : public IrEmitter {
         shape, ir_emitter_context_->llvm_module()->getDataLayout());
   }
 
-  // Structure describing a scatter operation for IR emission.
-  // TODO(jurahul): Migrate element generators to use MLIR.
-  //                Migrate update_computation to be an MLIR Region.
-  struct ScatterDescriptor {
-    std::string name;
-    Shape operand_shape;
-    Shape scatter_indices_shape;
-    Shape updates_shape;
-    ScatterDimensionNumbers dim_numbers;
-    bool unique_indices;
-    const HloComputation* update_computation;
-    llvm_ir::IrArray output;
-    llvm_ir::ElementGenerator scatter_indices_gen;
-    llvm_ir::ElementGenerator updates_gen;
-    std::function<llvm::Type*(int64_t)> get_index_type;
-  };
-
-  // Emits code for an in-place scatter using the provided scatter operation
-  // description.
-  Status EmitScatter(const ScatterDescriptor& desc,
-                     const LaunchDimensions& launch_dimensions);
-
-  StatusOr<FusionEmissionResult> EmitScatter(
-      const HloFusionInstruction* fusion, mlir::lmhlo::FusionOp fusion_op,
-      HloFusionAnalysis& fusion_analysis);
-
   // Emits kernel thunk for a custom fusion implemented with hand written custom
   // device kernels.
   StatusOr<FusionEmissionResult> EmitCustomFusion(
@@ -421,7 +411,7 @@ class IrEmitterUnnested : public IrEmitter {
                                mlir::Value init_value_mlir, mlir::Value dest);
 
   // Returns a WhileThunk that invokes thunk sequences for 'condition' and
-  // 'body' sub-computations of while instruction 'hlo'.
+  // 'body' sub-computations of while instruction.
   StatusOr<std::unique_ptr<Thunk>> BuildWhileThunk(
       mlir::lmhlo::WhileOp while_op, const Thunk::ThunkInfo& thunk_info,
       const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
@@ -431,7 +421,10 @@ class IrEmitterUnnested : public IrEmitter {
       const HloInstruction* instr, const Thunk::ThunkInfo& thunk_info);
 
   // Returns a ForThunk which executes 'loop_limit' invocations of a thunk
-  // sequence from the 'body' sub-computation of the while instruction 'hlo'.
+  // sequence from the 'body' sub-computation of the while instruction.
+  StatusOr<std::unique_ptr<Thunk>> BuildForThunk(const HloInstruction* instr,
+                                                 int64_t loop_limit);
+
   StatusOr<std::unique_ptr<Thunk>> BuildForThunk(
       mlir::lmhlo::WhileOp while_op, const Thunk::ThunkInfo& thunk_info,
       int64_t loop_limit,
@@ -447,14 +440,15 @@ class IrEmitterUnnested : public IrEmitter {
   Status AssertNonDeterminismIsOkay(const std::string& op_name);
 
   StatusOr<BufferAllocation::Slice> GetAllocationSliceForHlo(
-      const HloInstruction* instr, const ShapeIndex& index) const;
+      const HloInstruction* instr, const ShapeIndex& index = {}) const;
 
   // The thunk sequence this IrEmitter generates for the input computation.
   ThunkSequence thunk_sequence_;
 
   // Maps async start ops to their executors so done can access the thunk.
   // Executor may be null if the start op is degenerate (so not emitted).
-  absl::flat_hash_map<mlir::Operation*, NcclCollectiveThunk::AsyncExecutor*>
+  absl::flat_hash_map<std::variant<mlir::Operation*, const HloInstruction*>,
+                      NcclCollectiveThunk::AsyncExecutor*>
       async_executors_;
 
   // Container for async send/recv events shared by send/recv thunks.
@@ -470,8 +464,6 @@ class IrEmitterUnnested : public IrEmitter {
       mlir::Operation::operand_range operands);
 
   GpuElementalIrEmitter elemental_emitter_;
-
-  KernelReuseCache kernel_reuse_cache_;
 };
 
 }  // namespace gpu

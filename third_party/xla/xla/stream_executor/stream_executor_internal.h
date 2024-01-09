@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/port.h"
-#include "xla/stream_executor/trace_listener.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
@@ -136,6 +135,10 @@ class CommandBufferInterface {
   virtual tsl::Status Trace(Stream* stream,
                             absl::AnyInvocable<tsl::Status()> function) = 0;
 
+  // Adds an execution barrier to a command buffer: all commands added before a
+  // barrier will complete before any of the commands added after a barrier.
+  virtual tsl::Status Barrier(StreamExecutor* executor) = 0;
+
   // Adds a kernel launch command to the command buffer.
   virtual tsl::Status Launch(const ThreadDim& threads, const BlockDim& blocks,
                              const Kernel& kernel, const KernelArgs& args) = 0;
@@ -155,6 +158,10 @@ class CommandBufferInterface {
 
   // Adds a device memory allocation node to the command buffer.
   virtual tsl::StatusOr<DeviceMemoryBase> Allocate(size_t bytes) = 0;
+
+  // Adds a device memory free command to the command buffer, buffer is
+  // allocated in other command buffer, free through real address.
+  virtual tsl::Status Free(DeviceMemoryBase dst) = 0;
 
   // For all conditional command APIs defined below, nested command buffers
   // constructed for conditional branches owned by *this and should never be
@@ -204,10 +211,6 @@ class CommandBufferInterface {
                             CommandBuffer::Builder cond_builder,
                             CommandBuffer::Builder body_builder) = 0;
 
-  // Adds a device memory free command to the command buffer, buffer is
-  // allocated in other command buffer, free through real address.
-  virtual tsl::Status Free(DeviceMemoryBase dst) = 0;
-
   // Finalizes command buffer and makes it executable. Once command buffer is
   // finalized no commands can be added to it.
   virtual tsl::Status Finalize() = 0;
@@ -244,13 +247,9 @@ class StreamInterface {
   virtual ~StreamInterface() = default;
 
   // Sets priority for a stream.
-  virtual void SetPriority(StreamPriority priority) {
-    LOG(ERROR) << "SetPriority unimplemented for this stream.";
-  }
+  virtual void SetPriority(StreamPriority priority) {}
 
-  virtual void SetPriority(int priority) {
-    LOG(ERROR) << "SetPriority unimplemented for this stream.";
-  }
+  virtual void SetPriority(int priority) {}
 
   // Gets priority for a stream.
   virtual std::variant<StreamPriority, int> priority() const {
@@ -348,6 +347,12 @@ class StreamExecutorInterface {
   // Deallocates unified memory space previously allocated with
   // UnifiedMemoryAllocate.
   virtual void UnifiedMemoryDeallocate(void* mem) {}
+  virtual tsl::StatusOr<void*> CollectiveMemoryAllocate(uint64_t size) {
+    return absl::UnimplementedError("Not implemented");
+  }
+  virtual tsl::Status CollectiveMemoryDeallocate(void* mem) {
+    return absl::UnimplementedError("Not implemented");
+  }
   virtual void* HostMemoryAllocate(uint64_t size) = 0;
   virtual void HostMemoryDeallocate(void* mem) = 0;
   virtual bool HostMemoryRegister(void* mem, uint64_t size) = 0;
@@ -429,22 +434,6 @@ class StreamExecutorInterface {
   // caller.
   virtual tsl::StatusOr<std::unique_ptr<DeviceDescription>>
   CreateDeviceDescription() const = 0;
-
-  // Attempts to register the provided TraceListener with the device-specific
-  // Executor implementation. When this is called, the PIMPL interface has
-  // already taken ownership of the object and is managing the generic tracing
-  // events. The device-specific implementation must determine if the passed
-  // listener is of a type appropriate for it to trace during registration (and
-  // before dispatching events to it).
-  // Returns true if the listener was successfully registered, false otherwise.
-  // Does not take ownership of listener.
-  virtual bool RegisterTraceListener(TraceListener* listener) { return false; }
-
-  // Unregisters the specified listener from the device-specific Executor.
-  // Returns true if the listener was successfully registered, false otherwise.
-  virtual bool UnregisterTraceListener(TraceListener* listener) {
-    return false;
-  }
 
   // Creates a new BlasSupport object, ownership is transferred to the caller.
   //
