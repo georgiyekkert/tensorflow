@@ -11,7 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Rule for collecting python files that a target depends on."""
+"""Rule for collecting python files that a target depends on.
+
+It traverses dependencies of provided targets, collect their direct and transitive python deps and 
+then return a list of paths to files.
+"""
 
 def _transitive_py_deps_impl(ctx):
     outputs = depset(

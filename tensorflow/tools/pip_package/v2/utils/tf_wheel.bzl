@@ -11,20 +11,30 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Rule to define custom wheel."""
+"""Rule to build custom wheel.
 
-load("@local_config_python//:py_platform.bzl", "PLATFORM")
-load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
+It parses prvoided inputs and then calls `build_pip_package_py` binary with following args:
+1) `--project-name` - name to be passed to setup.py file. It will define name of the wheel.
+Should be set via --repo_env=WHEEL_NAME=tensorflow_cpu.
+2) `--collab` - whether this is a collaborator build.
+3) `--version` - tensorflow version.
+4) `--headers` - paths to header file.
+5) `--srcs` - paths to source files
+6) `--xla_aot` - paths to files that should be in xla_aot directory. 
+"""
+
+load("@python_version_repo//:py_version.bzl", "WHEEL_COLLAB", "WHEEL_NAME")
 load("//tensorflow:tensorflow.bzl", "VERSION")
 
 def _tf_wheel_impl(ctx):
     executable = ctx.executable.wheel_binary
-    output_wheel = ctx.outputs.wheel
 
+    output = ctx.actions.declare_directory("wheel_house")
     args = ctx.actions.args()
-    args.add("--project-name", ctx.attr.name)
-    args.add("--output-name", output_wheel.path)
-    args.add("--version", ctx.attr.tf_version)
+    args.add("--project-name", WHEEL_NAME)
+    args.add("--collab", str(WHEEL_COLLAB))
+    args.add("--output-name", output.path)
+    args.add("--version", VERSION)
 
     headers = ctx.files.headers[:]
     for f in headers:
@@ -35,7 +45,7 @@ def _tf_wheel_impl(ctx):
         args.add("--xla_aot=%s" % (f.path))
 
     srcs = []
-    for src in ctx.attr.srcs:
+    for src in ctx.attr.source_files:
         for f in src.files.to_list():
             srcs.append(f)
             args.add("--srcs=%s" % (f.path))
@@ -45,26 +55,21 @@ def _tf_wheel_impl(ctx):
     ctx.actions.run(
         arguments = [args],
         inputs = srcs + headers + xla_aot,
-        outputs = [output_wheel],
+        outputs = [output],
         executable = executable,
     )
+    return [DefaultInfo(files = depset(direct = [output]))]
 
 tf_wheel = rule(
     attrs = {
-        "srcs": attr.label_list(allow_files = True),
+        "source_files": attr.label_list(allow_files = True),
         "headers": attr.label_list(allow_files = True),
         "xla_aot_compiled": attr.label_list(allow_files = True),
-        "py_version": attr.string(default = HERMETIC_PYTHON_VERSION.replace(".", "")),
-        "platform": attr.string(default = PLATFORM.replace("-", "_")),
-        "tf_version": attr.string(default = VERSION),
         "wheel_binary": attr.label(
             default = Label("//tensorflow/tools/pip_package/v2:build_pip_package_py"),
             executable = True,
             cfg = "exec",
         ),
-    },
-    outputs = {
-        "wheel": "%{name}-%{tf_version}-cp%{py_version}-cp%{py_version}-%{platform}.whl",
     },
     implementation = _tf_wheel_impl,
 )

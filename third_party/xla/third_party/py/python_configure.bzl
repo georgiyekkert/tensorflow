@@ -6,7 +6,6 @@ load(
     "BAZEL_SH",
     "PYTHON_BIN_PATH",
     "PYTHON_LIB_PATH",
-    "get_python_bin",
 )
 
 def _create_local_python_repository(repository_ctx):
@@ -20,13 +19,6 @@ def _create_local_python_repository(repository_ctx):
     if repository_ctx.attr.platform_constraint:
         platform_constraint = "\"%s\"" % repository_ctx.attr.platform_constraint
     repository_ctx.template("BUILD", build_tpl, {"%{PLATFORM_CONSTRAINT}": platform_constraint})
-
-    python_bin = get_python_bin(repository_ctx)
-    platform_py = repository_ctx.execute([python_bin, "-c", "import sysconfig;print(sysconfig.get_platform())"]).stdout.splitlines()[0]
-    repository_ctx.file(
-        "py_platform.bzl",
-        "PLATFORM = '{}'".format(platform_py),
-    )
 
 def _python_autoconf_impl(repository_ctx):
     """Implementation of the python_autoconf repository rule."""

@@ -11,7 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tool to rearrange files and build the wheel."""
+"""Tool to rearrange files and build the wheel.
+
+In a nutshell this script does:
+1) Takes lists of paths to .h/.py/.so/etc files.
+2) Creates a temporary directory.
+3) Copies files from #1 to #2 with some exceptions and corrections.
+4) A wheel is created from the files in the temp directory.
+
+Most of the corrections are related to tsl/xla vendoring:
+These files used to be a part of source code but were moved to an external repo.
+To not break the TF API, we pretend that it's still part of the it.
+"""
 
 import argparse
 import glob
@@ -44,11 +55,19 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--xla_aot", help="xla aot compiled sources",
                       action="append")
   parser.add_argument("--version", help="TF version")
+  parser.add_argument("--collab", help="True if collaborator build")
   return parser.parse_args()
 
 
 def prepare_headers(headers: list[str], srcs_dir: str) -> None:
-  """Copy and rearrange header files in the source directory."""
+  """Copy and rearrange header files in the target directory.
+
+  Filter out headers by their path and replace paths for some of them.
+
+  Args:
+    headers: a list of paths to header files.
+    srcs_dir: target directory where headers are copied to.
+  """
   path_to_exclude = [
       "external/pypi",
       "external/jsoncpp_git/src",
@@ -94,7 +113,14 @@ def prepare_headers(headers: list[str], srcs_dir: str) -> None:
 
 
 def prepare_srcs(deps: list[str], srcs_dir: str) -> None:
-  """Rearrange source files in the directory."""
+  """Rearrange source files in target the target directory.
+
+  Exclude `external` files and move vendored xla/tsl files accordingly.
+
+  Args:
+    deps: a list of paths to files.
+    srcs_dir: target directory where files are copied to.
+  """
   path_to_replace = {
       "external/local_xla/": "tensorflow/compiler",
       "external/local_tsl/": "tensorflow",
@@ -112,6 +138,12 @@ def prepare_srcs(deps: list[str], srcs_dir: str) -> None:
 
 
 def prepare_aot(aot: list[str], srcs_dir: str) -> None:
+  """Rearrange xla_aot files in target the target directory.
+  
+  Args:
+    aot: a list of paths to files that should be in xla_aot directory.
+    srcs_dir: target directory where files are copied to.
+  """
   for file in aot:
     if "external/local_tsl/" in file:
       copy_file(file, srcs_dir, "external/local_tsl/")
@@ -130,7 +162,15 @@ def prepare_aot(aot: list[str], srcs_dir: str) -> None:
 def prepare_wheel_srcs(
     headers: list[str], srcs: list[str], aot: list[str], srcs_dir: str,
     version: str) -> None:
-  """Rearrange source and header files."""
+  """Rearrange source and header files.
+  
+  Args: 
+    headers: a list of paths to header files.
+    srcs: a list of paths to the rest of files.
+    aot: a list of paths to files that should be in xla_aot directory.
+    srcs_dir: directory to copy files to.
+    version: tensorflow version.
+  """
   prepare_headers(headers, os.path.join(srcs_dir, "tensorflow/include"))
   prepare_srcs(srcs, srcs_dir)
   prepare_aot(aot, os.path.join(srcs_dir, "tensorflow/xla_aot_runtime_src"))
@@ -170,7 +210,13 @@ def update_xla_tsl_imports(srcs_dir: str) -> None:
 
 
 def patch_so(srcs_dir: str) -> None:
-  """Patch .so files."""
+  """Patch .so files.
+  
+  We must patch some of .so files otherwise auditwheel will fail.
+  
+  Args:
+    srcs_dir: target directory with .so files to patch.
+  """
   to_patch = {
       "tensorflow/python/_pywrap_tensorflow_internal.so":
       "$ORIGIN/../../tensorflow/tsl/python/lib/core",
@@ -189,7 +235,16 @@ def patch_so(srcs_dir: str) -> None:
 
 
 def rename_libtensorflow(srcs_dir: str, version: str):
-  """Update version to major for libtensorflow_cc."""
+  """Update libtensorflow_cc file name.
+  
+  Bazel sets full TF version in name but libtensorflow_cc must contain only 
+  major. Update accordingly to the platform:
+  e.g. libtensorflow_cc.so.2.15.0 -> libtensorflow_cc.2
+  
+  Args:
+    srcs_dir: target directory with files.
+    version: Major version to be set.
+  """
   major_version = version.split(".")[0]
   if is_macos():
     shutil.move(
@@ -232,13 +287,25 @@ def create_local_config_python(dst_dir: str) -> None:
   shutil.copytree(glob.glob(path)[0], os.path.join(dst_dir, "python_include"))
 
 
-def build_wheel(dir_path: str, cwd: str, project_name: str) -> None:
+def build_wheel(dir_path: str, cwd: str, project_name: str,
+                collab: str = False) -> None:
+  """Build the wheel in the target directory.
+  
+  Args:
+    dir_path: directory where the wheel will be stored
+    cwd: path to directory with wheel source files
+    project_name: name to pass to setup.py.
+    collab: defines if this is a collab build
+  """
   env = os.environ.copy()
   if is_windows():
     # HOMEPATH is not set by bazel but it's required by setuptools.
     env["HOMEPATH"] = "C:"
   # project_name is needed by setup.py.
   env["project_name"] = project_name
+
+  if collab == "True":
+    env["collaborator_build"] = True
 
   subprocess.run(
       [sys.executable, "tensorflow/tools/pip_package/v2/setup.py",
@@ -248,13 +315,12 @@ def build_wheel(dir_path: str, cwd: str, project_name: str) -> None:
 
 if __name__ == "__main__":
   args = parse_args()
-
   temp_dir = tempfile.TemporaryDirectory(prefix="tensorflow_wheel")
   temp_dir_path = temp_dir.name
   try:
     prepare_wheel_srcs(args.headers, args.srcs, args.xla_aot,
                        temp_dir_path, args.version)
-    build_wheel(os.path.dirname(os.path.join(os.getcwd(), args.output_name)),
-                temp_dir_path, args.project_name)
+    build_wheel(os.path.join(os.getcwd(), args.output_name),
+                temp_dir_path, args.project_name, args.collab)
   finally:
     temp_dir.cleanup()

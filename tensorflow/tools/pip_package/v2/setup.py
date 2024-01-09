@@ -58,10 +58,7 @@ project_name = 'tensorflow'
 if os.environ.get('project_name', None):
   project_name = os.environ['project_name']
 
-collaborator_build = False
-if '--collaborator_build' in sys.argv:
-  sys.argv.remove('--collaborator_build')
-  collaborator_build = True
+collaborator_build = os.environ.get('collaborator_build', False)
 
 
 # Returns standard if a tensorflow-* package is being built, and nightly if a
