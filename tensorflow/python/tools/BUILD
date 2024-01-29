@@ -2,7 +2,7 @@
 #   Tools for manipulating TensorFlow graphs.
 
 load("//tensorflow:strict.default.bzl", "py_strict_binary", "py_strict_library", "py_strict_test")
-load("//tensorflow:tensorflow.bzl", "if_google", "if_xla_available", "tf_cc_test")
+load("//tensorflow:tensorflow.bzl", "if_google", "if_with_tpu_support", "if_xla_available", "tf_cc_test")
 load("//tensorflow/python/tools:tools.bzl", "saved_model_compile_aot")
 
 package(
@@ -36,7 +36,7 @@ py_strict_library(
         ":print_selective_registration_header",
         ":saved_model_cli",
         ":strip_unused",
-    ],
+    ] + if_with_tpu_support([":grpc_tpu_worker"]),
 )
 
 py_strict_library(
@@ -467,6 +467,11 @@ py_strict_binary(
         "@absl_py//absl:app",
         "@absl_py//absl/flags",
     ],
+)
+
+py_strict_binary(
+    name = "grpc_tpu_worker",
+    srcs = ["grpc_tpu_worker.py"],
 )
 
 EMITTED_AOT_SAVE_MODEL_OBJECTS = [
