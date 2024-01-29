@@ -327,6 +327,9 @@ if '_tpu' in project_name:
       ).strftime('%Y%m%d'),
   )
   REQUIRED_PACKAGES.append([f'libtpu-nightly=={_libtpu_version}'])
+  CONSOLE_SCRIPTS.append(
+      'start_grpc_tpu_worker = tensorflow.python.tools.grpc_tpu_worker:run',
+  )
 
 if os.name == 'nt':
   EXTENSION_NAME = 'python/_pywrap_tensorflow_internal.pyd'
