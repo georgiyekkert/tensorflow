@@ -31,6 +31,10 @@ import sys
 
 import requests
 
+from tensorflow.core.protobuf import config_pb2
+from tensorflow.core.protobuf import tensorflow_server_pb2
+from tensorflow.python.training import server_lib
+
 
 def get_metadata(key):
   return requests.get(
@@ -126,10 +130,7 @@ def run():
   FLAGS, unparsed = parser.parse_known_args()
   # Must set environment variables before importing tensorflow.
   setup_env_vars()
-  from tensorflow.core.protobuf import config_pb2
-  from tensorflow.core.protobuf import tensorflow_server_pb2
   from tensorflow.python.platform import app
-  from tensorflow.python.training import server_lib
   app.run(main=main, argv=[sys.argv[0]] + unparsed)
 
 
