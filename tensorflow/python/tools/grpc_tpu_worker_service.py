@@ -23,7 +23,8 @@ import os
 import subprocess
 import sys
 
-SERVICE_FILE_CONTENT = f"""[Unit]
+SERVICE_FILE_CONTENT = f"""
+[Unit]
 Description=GRPC TPU Worker Service
 After=network.target
 
@@ -34,7 +35,7 @@ EnvironmentFile=/home/tpu-runtime/tpu-env
 ExecStartPre=/bin/mkdir -p /tmp/tflogs
 ExecStartPre=/bin/touch /tmp/tflogs/grpc_tpu_worker.log
 ExecStartPre=/bin/chmod +r /tmp/tflogs
-ExecStart=start_grpc_tpu_worker 2>&1 | tee -a /tmp/tflogs/grpc_tpu_worker.log'
+ExecStart=start_grpc_tpu_worker 2>&1 | tee -a /tmp/tflogs/grpc_tpu_worker.log
 Restart=on-failure
 # Restart service after 10 seconds if the service crashes:
 RestartSec=10
@@ -42,7 +43,7 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 """
-SERVICE_NAME = "grpc_tpu_worker"
+SERVICE_NAME = "grpc_tpu_worker.service"
 
 
 def create_systemd_service_file(service_content, service_name):
@@ -59,7 +60,7 @@ def move_file_to_systemd(service_name):
 
 def enable_start_service(service_name):
   commands = [
-      "sudo systemctl daemon reload",
+      "sudo systemctl daemon-reload",
       f"sudo systemctl enable {service_name}",
       f"sudo systemctl start {service_name}",
   ]
