@@ -329,6 +329,7 @@ if '_tpu' in project_name:
   #REQUIRED_PACKAGES.append([f'libtpu-nightly=={_libtpu_version}'])
   CONSOLE_SCRIPTS.append(
       'start_grpc_tpu_worker = tensorflow.python.tools.grpc_tpu_worker:run',
+      'start_grpc_tpu_service = tensorflow.python.tools.grpc_tpu_worker_service:run',
   )
 
 if os.name == 'nt':
