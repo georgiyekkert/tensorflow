@@ -36,7 +36,10 @@ py_strict_library(
         ":print_selective_registration_header",
         ":saved_model_cli",
         ":strip_unused",
-    ] + if_with_tpu_support([":grpc_tpu_worker"]),
+    ] + if_with_tpu_support([
+        ":grpc_tpu_worker",
+        ":grpc_tpu_worker_service"
+        ]),
 )
 
 py_strict_library(
@@ -472,6 +475,11 @@ py_strict_binary(
 py_strict_binary(
     name = "grpc_tpu_worker",
     srcs = ["grpc_tpu_worker.py"],
+)
+
+py_strict_binary(
+    name = "grpc_tpu_worker_service",
+    srcs = ["grpc_tpu_worker_service.py"],
 )
 
 EMITTED_AOT_SAVE_MODEL_OBJECTS = [
