@@ -23,6 +23,11 @@ import os
 import subprocess
 import sys
 
+def get_username():
+  return os.environ.get('USER')
+
+username = get_username()
+
 SERVICE_FILE_CONTENT = f"""
 [Unit]
 Description=GRPC TPU Worker Service
@@ -30,12 +35,12 @@ After=network.target
 
 [Service]
 Type=simple
-Environment="HOME=/home/tpu-runtime"
-EnvironmentFile=/home/tpu-runtime/tpu-env
-ExecStartPre=/bin/mkdir -p /tmp/tflogs
-ExecStartPre=/bin/touch /tmp/tflogs/grpc_tpu_worker.log
-ExecStartPre=/bin/chmod +r /tmp/tflogs
-ExecStart=start_grpc_tpu_worker 2>&1 | tee -a /tmp/tflogs/grpc_tpu_worker.log
+Environment="PYTHONPATH=$PYTHONPATH:/home/$USER/.local/lib/python3.10:/home/$USER/.local/lib/python3.11:/home/$USER/.local/lib/python3.12:/home/$USER/.local/lib/python3.9"
+#EnvironmentFile=/home/tpu-runtime/tpu-env
+#ExecStartPre=/bin/mkdir -p /tmp/tflogs
+#ExecStartPre=/bin/touch /tmp/tflogs/grpc_tpu_worker.log
+#ExecStartPre=/bin/chmod +r /tmp/tflogs
+ExecStart=/home/{username}/.local/bin/start_grpc_tpu_worker #2>&1 | tee -a /tmp/tflogs/grpc_tpu_worker.log
 Restart=on-failure
 # Restart service after 10 seconds if the service crashes:
 RestartSec=10
@@ -53,16 +58,20 @@ def create_systemd_service_file(service_content, service_name):
 
 
 def move_file_to_systemd(service_name):
-  command = f"sudo mv {service_name} /etc/systemd/system/{service_name}"
+  if not os.path.exists(f"~/.config/systemd/user/"):
+    mkdir_command = f"mkdir -p ~/.config/systemd/user"
+    subprocess.run(mkdir_command, shell=True, check=True)
+    print(f"Created directory ~/.config/systemd/user/")
+  command = f"mv {service_name} ~/.config/systemd/user/{service_name}"
   subprocess.run(command, shell=True, check=True)
-  print(f"Service file moved to /etc/systemd/system/{service_name}")
+  print(f"Service file moved to ~/.config/systemd/user/{service_name}")
 
 
 def enable_start_service(service_name):
   commands = [
-      "sudo systemctl daemon-reload",
-      f"sudo systemctl enable {service_name}",
-      f"sudo systemctl start {service_name}",
+      "systemctl --user daemon-reload",
+      f"systemctl --user enable {service_name}",
+      f"systemctl --user start {service_name}",
   ]
   for command in commands:
     subprocess.run(command, shell=True, check=True)
@@ -70,8 +79,8 @@ def enable_start_service(service_name):
 
 
 def run():
-  if os.path.exists(f"/etc/systemd/system/{SERVICE_NAME}"):
-    print(f"Service file /etc/systemd/system/{SERVICE_NAME} already exists")
+  if os.path.exists(f"~/.config/systemd/user/{SERVICE_NAME}"):
+    print(f"Service file ~/.config/systemd/user/{SERVICE_NAME} already exists")
     sys.exit(1)
   else:
     create_systemd_service_file(SERVICE_FILE_CONTENT, SERVICE_NAME)
